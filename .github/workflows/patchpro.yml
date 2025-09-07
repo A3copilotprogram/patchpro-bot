@@ -1,0 +1,51 @@
+name: PatchPro PR Feedback
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: patchpro-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  patchpro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install ruff semgrep patchpro-bot
+
+      - name: Run Ruff
+        run: |
+          ruff check . --output-format=json > ruff-findings.json
+
+      - name: Run Semgrep
+        run: |
+          semgrep --config=semgrep.yml --json > semgrep-findings.json
+
+      - name: Merge findings
+        run: |
+          python scripts/merge_findings.py ruff-findings.json semgrep-findings.json findings.json
+
+      - name: Run PatchPro agent
+        run: |
+          patchpro agent run --inputs findings.json --out patchpro.md
+
+      - name: Post sticky PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: patchpro.md
