@@ -1,10 +1,6 @@
 # filepath: e:\genai\patchpro\patchpro-bot\tests\test_hello.py
 import unittest
-
-def hello_world():
-    """A simple function to return 'Hello, World!'."""
-    return "Hello, World!"
-
+from hello import hello_world
 class TestHello(unittest.TestCase):
     def test_hello_world(self):
         """Test the basic hello_world function output."""
