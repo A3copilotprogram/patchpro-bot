@@ -1,7 +1,5 @@
 import json
 import sys
-from pathlib import Path
-
 def load_json(file_path: str) -> dict | list:
     """Load JSON from file with error handling."""
     try:
