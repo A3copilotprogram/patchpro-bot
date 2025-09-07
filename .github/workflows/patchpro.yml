@@ -46,7 +46,7 @@ jobs:
 
       - name: Run PatchPro agent
         run: |
-          patchpro agent run --inputs findings.json --out patchpro.md
+          python -m patchpro_bot.agent run --inputs findings.json --out patchpro.md
 
       - name: Post sticky PR comment
         uses: marocchino/sticky-pull-request-comment@v2
