@@ -1,4 +1,3 @@
-# filepath: e:\genai\patchpro\patchpro-bot\tests\test_hello.py
 import unittest
 
 def hello_world():
