@@ -1,0 +1,125 @@
+{
+  "errors": [],
+  "results": [
+    {
+      "check_id": "python.lang.security.hardcoded-password.hardcoded-password",
+      "path": "src/auth.py",
+      "start": {
+        "start": {
+          "line": 12,
+          "col": 13
+        },
+        "end": {
+          "line": 12,
+          "col": 35
+        }
+      },
+      "end": {
+        "start": {
+          "line": 12,
+          "col": 13
+        },
+        "end": {
+          "line": 12,
+          "col": 35
+        }
+      },
+      "extra": {
+        "message": "Hardcoded password found",
+        "metadata": {
+          "category": "security",
+          "confidence": "HIGH",
+          "cwe": "CWE-798",
+          "impact": "HIGH",
+          "likelihood": "MEDIUM",
+          "subcategory": ["hardcoded-secret"],
+          "technology": ["python"],
+          "references": [
+            "https://semgrep.dev/r/python.lang.security.hardcoded-password.hardcoded-password"
+          ]
+        },
+        "severity": "ERROR",
+        "lines": "password = \"secret123\""
+      }
+    },
+    {
+      "check_id": "python.lang.security.sql-injection.sql-injection",
+      "path": "src/database.py",
+      "start": {
+        "start": {
+          "line": 25,
+          "col": 5
+        },
+        "end": {
+          "line": 27,
+          "col": 20
+        }
+      },
+      "end": {
+        "start": {
+          "line": 25,
+          "col": 5
+        },
+        "end": {
+          "line": 27,
+          "col": 20
+        }
+      },
+      "extra": {
+        "message": "Potential SQL injection detected. User input is passed directly to SQL query without parameterization.",
+        "metadata": {
+          "category": "security",
+          "confidence": "HIGH",
+          "cwe": "CWE-89",
+          "impact": "HIGH",
+          "likelihood": "HIGH",
+          "subcategory": ["sql-injection"],
+          "technology": ["python"],
+          "references": [
+            "https://semgrep.dev/r/python.lang.security.sql-injection.sql-injection"
+          ]
+        },
+        "severity": "ERROR",
+        "lines": "query = f\"SELECT * FROM users WHERE id = {user_id}\"\ncursor.execute(query)"
+      }
+    },
+    {
+      "check_id": "python.lang.best-practice.open-file-with-context-manager.open-file-with-context-manager",
+      "path": "src/file_handler.py",
+      "start": {
+        "start": {
+          "line": 15,
+          "col": 9
+        },
+        "end": {
+          "line": 15,
+          "col": 30
+        }
+      },
+      "end": {
+        "start": {
+          "line": 15,
+          "col": 9
+        },
+        "end": {
+          "line": 15,
+          "col": 30
+        }
+      },
+      "extra": {
+        "message": "File opened without context manager. Use 'with open()' to ensure proper file handling.",
+        "metadata": {
+          "category": "best-practice",
+          "confidence": "MEDIUM",
+          "impact": "MEDIUM",
+          "likelihood": "LOW",
+          "subcategory": ["resource-management"],
+          "technology": ["python"]
+        },
+        "severity": "WARNING",
+        "lines": "file = open(filename)",
+        "fix": "with open(filename) as file:"
+      }
+    }
+  ]
+}
