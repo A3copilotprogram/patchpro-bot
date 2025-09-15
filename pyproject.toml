@@ -10,8 +10,23 @@ dependencies = [
   "typer==0.12.3",
   "pydantic==2.8.2",
   "rich==13.7.1",
-  "httpx==0.27.2"
+  "httpx==0.27.2",
+  "openai>=1.0.0",
+  "unidiff>=0.7.5",
+  "python-dotenv>=1.0.0"
 ]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",
+  "pytest-cov>=4.0.0",
+  "pytest-asyncio>=0.21.0",
+  "black>=23.0.0",
+  "mypy>=1.0.0"
+]
+
+[project.scripts]
+patchpro = "patchpro_bot.cli:app"
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
