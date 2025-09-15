@@ -1,0 +1,74 @@
+[
+  {
+    "code": "F401",
+    "filename": "src/example.py",
+    "fix": {
+      "applicability": "automatic",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 11,
+            "row": 2
+          },
+          "location": {
+            "column": 1,
+            "row": 1
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 8,
+      "row": 1
+    },
+    "end_location": {
+      "column": 11,
+      "row": 1
+    },
+    "message": "`sys` imported but unused",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "code": "E501",
+    "filename": "src/example.py", 
+    "location": {
+      "column": 80,
+      "row": 5
+    },
+    "message": "Line too long (95 > 79 characters)",
+    "url": "https://docs.astral.sh/ruff/rules/line-too-long"
+  },
+  {
+    "code": "W291",
+    "filename": "src/example.py",
+    "fix": {
+      "applicability": "automatic",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 8
+          },
+          "location": {
+            "column": 15,
+            "row": 7
+          }
+        }
+      ],
+      "message": "Remove trailing whitespace"
+    },
+    "location": {
+      "column": 15,
+      "row": 7
+    },
+    "end_location": {
+      "column": 1,
+      "row": 8
+    },
+    "message": "Trailing whitespace",
+    "url": "https://docs.astral.sh/ruff/rules/trailing-whitespace"
+  }
+]
