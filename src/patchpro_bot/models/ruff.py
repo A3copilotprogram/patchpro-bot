@@ -1,7 +1,7 @@
 """Ruff JSON output models."""
 
-from typing import Optional, Any, Dict, List
-from pydantic import BaseModel, Field, field_validator
+from typing import Optional, List
+from pydantic import BaseModel, Field
 
 from .common import AnalysisFinding, CodeLocation, Severity
 

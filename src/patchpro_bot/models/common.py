@@ -1,6 +1,6 @@
 """Common data models shared across analysis tools."""
 
-from typing import Optional, Union
+from typing import Optional
 from enum import Enum
 from pydantic import BaseModel, Field
 

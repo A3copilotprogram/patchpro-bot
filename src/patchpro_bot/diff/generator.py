@@ -4,10 +4,8 @@ import logging
 import difflib
 import hashlib
 from datetime import datetime
-from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 
-from ..models import AnalysisFinding
 from ..llm.response_parser import DiffPatch, CodeFix
 from .file_reader import FileReader
 
