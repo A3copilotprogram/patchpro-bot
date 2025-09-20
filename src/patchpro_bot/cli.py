@@ -1,9 +1,8 @@
 """Command-line interface for PatchPro Bot."""
 
+
 import os
-import sys
 import json
-import subprocess
 from pathlib import Path
 from typing import List, Optional
 
@@ -17,62 +16,7 @@ from . import AgentCore, AgentConfig
 from .analyzer import FindingsAnalyzer, NormalizedFindings
 
 app = typer.Typer(help="PatchPro Bot - CI code-repair assistant")
-
 console = Console()
-
-
-        if key not in findings_data:
-            console.print(f"[red]❌ Missing required key: {key}[/red]")
-            raise typer.Exit(1)
-        # Check findings structure
-    if not isinstance(findings_data["findings"], list):
-        console.print("[red]❌ 'findings' must be a list[/red]")
-        raise typer.Exit(1)
-    # Check metadata structure
-    metadata = findings_data["metadata"]
-    required_metadata = ["tool", "version", "total_findings"]
-    for key in required_metadata:
-
-        if key not in findings_data:
-            console.print(f"[red]❌ Missing required key: {key}[/red]")
-            raise typer.Exit(1)
-        # Check findings structure
-    if not isinstance(findings_data["findings"], list):
-        console.print("[red]❌ 'findings' must be a list[/red]")
-        raise typer.Exit(1)
-    # Check metadata structure
-    metadata = findings_data["metadata"]
-    required_metadata = ["tool", "version", "total_findings"]
-    for key in required_metadata:
-        if key not in metadata:
-            console.print(f"[red]❌ Missing metadata key: {key}[/red]")
-            raise typer.Exit(1)
-    console.print(f"[green]✅ Schema validation passed! Found {len(findings_data['findings'])} findings[/green]")
-    except json.JSONDecodeError:
-        console.print(f"[red]❌ Invalid JSON in {findings_file}[/red]")
-        raise typer.Exit(1)
-    except Exception as e:
-        console.print(f"[red]❌ Validation error: {e}[/red]")
-        raise typer.Exit(1)
-        findings = reader.read_all_findings()
-        
-        rprint(f"[green]✅ Successfully validated {len(findings)} findings[/green]")
-        
-        # Show breakdown
-        if findings:
-            from .analysis import FindingAggregator
-            aggregator = FindingAggregator(findings)
-            summary = aggregator.get_summary()
-            
-            table = Table(title="Analysis Summary")
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="magenta")
-            
-            table.add_row("Total Findings", str(summary["total_findings"]))
-            table.add_row("Tools", ", ".join(summary["by_tool"].keys()))
-            table.add_row("Affected Files", str(summary["affected_files"]))
-            
-            console.print(table)
         
     except Exception as e:
         rprint(f"[red]❌ Validation failed: {e}[/red]")

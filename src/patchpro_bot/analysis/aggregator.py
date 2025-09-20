@@ -1,7 +1,7 @@
 """Aggregator for combining and organizing analysis findings."""
 
 import logging
-from typing import List, Dict, Set
+from typing import List, Dict
 from collections import defaultdict
 
 from ..models import AnalysisFinding, Severity

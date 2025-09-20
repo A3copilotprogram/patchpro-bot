@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import List, Dict, Optional, NamedTuple, Union
+from typing import List, Optional
 from dataclasses import dataclass
 from enum import Enum
 

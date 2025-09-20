@@ -1,7 +1,6 @@
 """Legacy CI runner - now delegates to the new agent core."""
 
 from pathlib import Path
-import json
 import os
 import logging
 
