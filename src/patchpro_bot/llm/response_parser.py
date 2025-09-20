@@ -1,12 +1,34 @@
 """Parser for LLM responses."""
 
-import re
+import json
 import logging
-from typing import List, Dict, Optional, NamedTuple
+from typing import List, Dict, Optional, NamedTuple, Union
 from dataclasses import dataclass
+from enum import Enum
 
 
 logger = logging.getLogger(__name__)
+
+
+class ResponseType(Enum):
+    """Types of responses the LLM can return."""
+    CODE_FIXES = "code_fixes"
+    DIFF_PATCHES = "diff_patches"
+
+
+@dataclass
+class ParsedResponse:
+    """Container for parsed LLM response."""
+    response_type: ResponseType
+    code_fixes: List["CodeFix"] = None
+    diff_patches: List["DiffPatch"] = None
+    
+    def __post_init__(self):
+        """Initialize empty lists if None."""
+        if self.code_fixes is None:
+            self.code_fixes = []
+        if self.diff_patches is None:
+            self.diff_patches = []
 
 
 @dataclass
@@ -37,11 +59,43 @@ class ResponseParser:
         """Initialize the response parser."""
         pass
     
-    def parse_code_fixes(self, response_content: str) -> List[CodeFix]:
-        """Parse code fixes from LLM response.
+    def parse_response(self, response_content: str, expected_type: ResponseType) -> ParsedResponse:
+        """Parse LLM response based on expected type.
         
         Args:
-            response_content: Raw LLM response content
+            response_content: Raw LLM response content (JSON format)
+            expected_type: The type of response we expect (CODE_FIXES or DIFF_PATCHES)
+            
+        Returns:
+            ParsedResponse object containing the appropriate parsed data
+        """
+        if expected_type == ResponseType.CODE_FIXES:
+            code_fixes = self.parse_code_fixes(response_content)
+            return ParsedResponse(
+                response_type=ResponseType.CODE_FIXES,
+                code_fixes=code_fixes,
+                diff_patches=[]
+            )
+        elif expected_type == ResponseType.DIFF_PATCHES:
+            diff_patches = self.parse_diff_patches(response_content)
+            return ParsedResponse(
+                response_type=ResponseType.DIFF_PATCHES,
+                code_fixes=[],
+                diff_patches=diff_patches
+            )
+        else:
+            logger.error(f"Unknown response type: {expected_type}")
+            return ParsedResponse(
+                response_type=expected_type,
+                code_fixes=[],
+                diff_patches=[]
+            )
+    
+    def parse_code_fixes(self, response_content: str) -> List[CodeFix]:
+        """Parse code fixes from LLM JSON response.
+        
+        Args:
+            response_content: Raw LLM response content (JSON format)
             
         Returns:
             List of parsed code fixes
@@ -52,37 +106,70 @@ class ResponseParser:
             logger.warning("Empty response content provided")
             return fixes
         
-        # Pattern to match fix sections - more flexible and case-insensitive
-        fix_pattern = r'## [Ff]ix #(\d+):\s*(.+?)\s*\n\s*\n\s*\*\*[Ff]ile\*\*:\s*`(.+?)`\s*\n\s*\*\*[Ll]ines\*\*:\s*(.+?)\s*\n(?:\s*\*\*[Ii]ssue\*\*:\s*(.+?)\s*\n\s*\n)?\s*\*\*[Oo]riginal [Cc]ode\*\*:\s*\n\s*```(?:python|py)\s*\n(.*?)\n\s*```\s*\n\s*\n\s*\*\*[Ff]ixed [Cc]ode\*\*:\s*\n\s*```(?:python|py)\s*\n(.*?)\n\s*```(?:\s*\n\s*\n\s*\*\*[Rr]ationale\*\*:\s*(.+?))?(?=\n\s*---|$|\n\s*## [Ff]ix|\n\s*### [Pp]atch)'
-        
-        matches = re.finditer(fix_pattern, response_content, re.DOTALL)
-        
-        for match in matches:
-            try:
-                fix = CodeFix(
-                    fix_number=int(match.group(1)),
-                    description=match.group(2).strip(),
-                    file_path=match.group(3).strip(),
-                    lines=match.group(4).strip(),
-                    issue=match.group(5).strip() if match.group(5) else "No issue specified",
-                    original_code=match.group(6).strip(),
-                    fixed_code=match.group(7).strip(),
-                    rationale=match.group(8).strip() if match.group(8) else "No rationale provided",
-                )
-                fixes.append(fix)
-                logger.debug(f"Parsed fix #{fix.fix_number} for {fix.file_path}")
-            except Exception as e:
-                logger.error(f"Failed to parse fix from match: {e}")
-                continue
+        try:
+            # Parse JSON response
+            response_data = json.loads(response_content.strip())
+            
+            # Extract fixes from the JSON structure
+            fixes_data = response_data.get("fixes", [])
+            
+            for fix_data in fixes_data:
+                try:
+                    fix = CodeFix(
+                        fix_number=fix_data.get("fix_number", 0),
+                        description=fix_data.get("description", ""),
+                        file_path=fix_data.get("file_path", ""),
+                        lines=fix_data.get("lines", ""),
+                        issue=fix_data.get("issue", "No issue specified"),
+                        original_code=fix_data.get("original_code", ""),
+                        fixed_code=fix_data.get("fixed_code", ""),
+                        rationale=fix_data.get("rationale", "No rationale provided"),
+                    )
+                    fixes.append(fix)
+                    logger.debug(f"Parsed fix #{fix.fix_number} for {fix.file_path}")
+                except Exception as e:
+                    logger.error(f"Failed to parse fix from JSON data: {e}")
+                    continue
+                    
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON response: {e}")
+            # Fallback: try to extract JSON from response if it's wrapped in other text
+            cleaned_content = self._extract_json_from_response(response_content)
+            if cleaned_content:
+                try:
+                    response_data = json.loads(cleaned_content)
+                    fixes_data = response_data.get("fixes", [])
+                    
+                    for fix_data in fixes_data:
+                        try:
+                            fix = CodeFix(
+                                fix_number=fix_data.get("fix_number", 0),
+                                description=fix_data.get("description", ""),
+                                file_path=fix_data.get("file_path", ""),
+                                lines=fix_data.get("lines", ""),
+                                issue=fix_data.get("issue", "No issue specified"),
+                                original_code=fix_data.get("original_code", ""),
+                                fixed_code=fix_data.get("fixed_code", ""),
+                                rationale=fix_data.get("rationale", "No rationale provided"),
+                            )
+                            fixes.append(fix)
+                            logger.debug(f"Parsed fix #{fix.fix_number} for {fix.file_path}")
+                        except Exception as e:
+                            logger.error(f"Failed to parse fix from fallback JSON: {e}")
+                            continue
+                except json.JSONDecodeError:
+                    logger.error("Failed to parse JSON even after cleanup")
+        except Exception as e:
+            logger.error(f"Unexpected error parsing code fixes: {e}")
         
         logger.info(f"Parsed {len(fixes)} code fixes from response")
         return fixes
     
     def parse_diff_patches(self, response_content: str) -> List[DiffPatch]:
-        """Parse unified diff patches from LLM response.
+        """Parse unified diff patches from LLM JSON response.
         
         Args:
-            response_content: Raw LLM response content
+            response_content: Raw LLM response content (JSON format)
             
         Returns:
             List of parsed diff patches
@@ -93,54 +180,118 @@ class ResponseParser:
             logger.warning("Empty response content provided")
             return patches
         
-        # Pattern to match patch sections - more flexible and case-insensitive
-        patch_pattern = r'### [Pp]atch for `(.+?)`\s*\n\s*\n\s*```diff\s*\n(.*?)\n\s*```(?:\s*\n\s*\n\s*\*\*[Ss]ummary\*\*:\s*(.+?))?(?=\n---|### [Pp]atch for|$)'
-        
-        matches = re.finditer(patch_pattern, response_content, re.DOTALL)
-        
-        for match in matches:
-            try:
+        try:
+            # Parse JSON response
+            response_data = json.loads(response_content.strip())
+            
+            # Handle both single patch and multiple patches formats
+            if "patch" in response_data:
+                # Single patch format
+                patch_data = response_data["patch"]
                 patch = DiffPatch(
-                    file_path=match.group(1).strip(),
-                    diff_content=match.group(2).strip(),
-                    summary=match.group(3).strip() if match.group(3) else None,
+                    file_path=patch_data.get("file_path", ""),
+                    diff_content=patch_data.get("diff_content", ""),
+                    summary=patch_data.get("summary", None),
                 )
                 patches.append(patch)
-                logger.debug(f"Parsed diff patch for {patch.file_path}")
-            except Exception as e:
-                logger.error(f"Failed to parse patch from match: {e}")
-                continue
-        
-        # Also try to extract standalone diffs (without the ### Patch for format)
-        standalone_diff_pattern = r'```diff\n(diff --git.*?)\n```'
-        standalone_matches = re.finditer(standalone_diff_pattern, response_content, re.DOTALL)
-        
-        for match in standalone_matches:
-            try:
-                diff_content = match.group(1).strip()
+                logger.debug(f"Parsed single diff patch for {patch.file_path}")
                 
-                # Extract file path from diff header
-                file_match = re.search(r'diff --git a/(.+?) b/', diff_content)
-                if file_match:
-                    file_path = file_match.group(1)
-                    
-                    # Check if we already have this patch
-                    if not any(p.file_path == file_path for p in patches):
+            elif "patches" in response_data:
+                # Multiple patches format
+                patches_data = response_data["patches"]
+                for patch_data in patches_data:
+                    try:
                         patch = DiffPatch(
-                            file_path=file_path,
-                            diff_content=diff_content,
+                            file_path=patch_data.get("file_path", ""),
+                            diff_content=patch_data.get("diff_content", ""),
+                            summary=patch_data.get("summary", None),
                         )
                         patches.append(patch)
-                        logger.debug(f"Parsed standalone diff patch for {patch.file_path}")
-            except Exception as e:
-                logger.error(f"Failed to parse standalone diff: {e}")
-                continue
+                        logger.debug(f"Parsed diff patch for {patch.file_path}")
+                    except Exception as e:
+                        logger.error(f"Failed to parse patch from JSON data: {e}")
+                        continue
+                        
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON response: {e}")
+            # Fallback: try to extract JSON from response if it's wrapped in other text
+            cleaned_content = self._extract_json_from_response(response_content)
+            if cleaned_content:
+                try:
+                    response_data = json.loads(cleaned_content)
+                    
+                    if "patch" in response_data:
+                        patch_data = response_data["patch"]
+                        patch = DiffPatch(
+                            file_path=patch_data.get("file_path", ""),
+                            diff_content=patch_data.get("diff_content", ""),
+                            summary=patch_data.get("summary", None),
+                        )
+                        patches.append(patch)
+                        logger.debug(f"Parsed single diff patch for {patch.file_path}")
+                        
+                    elif "patches" in response_data:
+                        patches_data = response_data["patches"]
+                        for patch_data in patches_data:
+                            try:
+                                patch = DiffPatch(
+                                    file_path=patch_data.get("file_path", ""),
+                                    diff_content=patch_data.get("diff_content", ""),
+                                    summary=patch_data.get("summary", None),
+                                )
+                                patches.append(patch)
+                                logger.debug(f"Parsed diff patch for {patch.file_path}")
+                            except Exception as e:
+                                logger.error(f"Failed to parse patch from fallback JSON: {e}")
+                                continue
+                except json.JSONDecodeError:
+                    logger.error("Failed to parse JSON even after cleanup")
+        except Exception as e:
+            logger.error(f"Unexpected error parsing diff patches: {e}")
         
         logger.info(f"Parsed {len(patches)} diff patches from response")
         return patches
     
+    def _extract_json_from_response(self, response_content: str) -> Optional[str]:
+        """Extract JSON from response content that may contain additional text.
+        
+        Args:
+            response_content: Raw response content
+            
+        Returns:
+            Extracted JSON string or None if not found
+        """
+        # Try to find JSON block between ```json markers
+        json_start_markers = ["```json\n", "```json ", "```\n{", "```{"]
+        json_end_markers = ["```", "\n```"]
+        
+        for start_marker in json_start_markers:
+            start_idx = response_content.find(start_marker)
+            if start_idx != -1:
+                json_start = start_idx + len(start_marker)
+                for end_marker in json_end_markers:
+                    end_idx = response_content.find(end_marker, json_start)
+                    if end_idx != -1:
+                        return response_content[json_start:end_idx].strip()
+        
+        # Try to find JSON by looking for opening and closing braces
+        open_brace = response_content.find('{')
+        if open_brace != -1:
+            brace_count = 0
+            for i, char in enumerate(response_content[open_brace:], open_brace):
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        return response_content[open_brace:i+1]
+        
+        return None
+    
     def extract_code_blocks(self, response_content: str, language: str = "python") -> List[str]:
         """Extract code blocks from response.
+        
+        Note: This method is deprecated in favor of JSON-based parsing.
         
         Args:
             response_content: Raw LLM response content
@@ -149,19 +300,13 @@ class ResponseParser:
         Returns:
             List of code block contents
         """
-        code_blocks = []
-        
-        # Pattern to match code blocks
-        pattern = f'```{language}\n(.*?)\n```'
-        matches = re.finditer(pattern, response_content, re.DOTALL)
-        
-        for match in matches:
-            code_blocks.append(match.group(1).strip())
-        
-        return code_blocks
+        logger.warning("extract_code_blocks is deprecated - use JSON-based parsing instead")
+        return []
     
     def extract_diff_blocks(self, response_content: str) -> List[str]:
         """Extract diff blocks from response.
+        
+        Note: This method is deprecated in favor of JSON-based parsing.
         
         Args:
             response_content: Raw LLM response content
@@ -169,16 +314,8 @@ class ResponseParser:
         Returns:
             List of diff block contents
         """
-        diff_blocks = []
-        
-        # Pattern to match diff blocks
-        pattern = r'```diff\n(.*?)\n```'
-        matches = re.finditer(pattern, response_content, re.DOTALL)
-        
-        for match in matches:
-            diff_blocks.append(match.group(1).strip())
-        
-        return diff_blocks
+        logger.warning("extract_diff_blocks is deprecated - use JSON-based parsing instead")
+        return []
     
     def validate_diff_format(self, diff_content: str) -> bool:
         """Validate that diff content is in proper unified diff format.
@@ -190,14 +327,14 @@ class ResponseParser:
             True if valid unified diff format, False otherwise
         """
         required_patterns = [
-            r'^diff --git',  # Diff header
-            r'^\-\-\- a/',   # Source file marker
-            r'^\+\+\+ b/',   # Target file marker
-            r'^@@.*@@',      # Hunk header
+            'diff --git',  # Diff header
+            '--- a/',      # Source file marker
+            '+++ b/',      # Target file marker
+            '@@',          # Hunk header
         ]
         
         for pattern in required_patterns:
-            if not re.search(pattern, diff_content, re.MULTILINE):
+            if pattern not in diff_content:
                 logger.warning(f"Diff validation failed: missing pattern {pattern}")
                 return False
         
@@ -212,15 +349,25 @@ class ResponseParser:
         Returns:
             File path if found, None otherwise
         """
-        # Try to extract from diff header
-        match = re.search(r'diff --git a/(.+?) b/', diff_content)
-        if match:
-            return match.group(1)
-        
-        # Try to extract from file markers
-        match = re.search(r'^\-\-\- a/(.+?)$', diff_content, re.MULTILINE)
-        if match:
-            return match.group(1)
+        # Look for diff header
+        lines = diff_content.split('\n')
+        for line in lines:
+            if line.startswith('diff --git a/'):
+                # Extract path between 'a/' and ' b/'
+                try:
+                    start_idx = line.find('a/') + 2
+                    end_idx = line.find(' b/')
+                    if start_idx > 1 and end_idx > start_idx:
+                        return line[start_idx:end_idx]
+                except Exception:
+                    continue
+                    
+            elif line.startswith('--- a/'):
+                # Extract path after 'a/'
+                try:
+                    return line[6:]  # Remove '--- a/' prefix
+                except Exception:
+                    continue
         
         return None
     
@@ -233,13 +380,24 @@ class ResponseParser:
         Returns:
             Cleaned response content
         """
-        # Remove excessive whitespace
-        cleaned = re.sub(r'\n{3,}', '\n\n', response_content)
+        # Simple cleaning without regex
+        # Remove excessive whitespace by splitting and rejoining
+        lines = response_content.split('\n')
+        cleaned_lines = []
+        empty_line_count = 0
         
-        # Normalize line endings
+        for line in lines:
+            if line.strip() == '':
+                empty_line_count += 1
+                if empty_line_count <= 2:  # Allow max 2 consecutive empty lines
+                    cleaned_lines.append('')
+            else:
+                empty_line_count = 0
+                cleaned_lines.append(line)
+        
+        # Normalize line endings and strip
+        cleaned = '\n'.join(cleaned_lines)
         cleaned = cleaned.replace('\r\n', '\n').replace('\r', '\n')
-        
-        # Strip leading/trailing whitespace
         cleaned = cleaned.strip()
         
         return cleaned
