@@ -1,8 +1,7 @@
 """Prompt templates and builders for LLM interactions."""
 
 import logging
-from typing import List, Optional, Dict, Any
-from pathlib import Path
+from typing import List, Optional, Dict
 
 from ..analysis import FindingAggregator
 from ..models import AnalysisFinding

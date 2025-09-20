@@ -186,8 +186,8 @@ class PatchWriter:
                 for file_path, diff_content in sorted(diffs.items()):
                     # Count changes
                     lines = diff_content.splitlines()
-                    additions = len([l for l in lines if l.startswith('+')])
-                    deletions = len([l for l in lines if l.startswith('-')])
+                    additions = len([line for line in lines if line.startswith('+')])
+                    deletions = len([line for line in lines if line.startswith('-')])
                     
                     f.write(f"### `{file_path}`\n\n")
                     f.write(f"- Lines added: {additions}\n")

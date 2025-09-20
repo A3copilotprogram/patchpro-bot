@@ -1,7 +1,6 @@
 """Command-line interface for PatchPro Bot."""
 
 import os
-import sys
 from pathlib import Path
 from typing import Optional
 
@@ -108,7 +107,6 @@ def run(
     except Exception as e:
         rprint(f"[red]❌ Pipeline failed with error: {e}[/red]")
         if verbose:
-            import traceback
             console.print_exception()
         raise typer.Exit(1)
 
