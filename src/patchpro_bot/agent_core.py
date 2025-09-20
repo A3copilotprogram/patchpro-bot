@@ -5,9 +5,10 @@ import os
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
+from enum import Enum
 
 from .analysis import AnalysisReader, FindingAggregator
-from .llm import LLMClient, PromptBuilder, ResponseParser
+from .llm import LLMClient, PromptBuilder, ResponseParser, ResponseType
 from .diff import DiffGenerator, FileReader, PatchWriter
 from .models import AnalysisFinding
 
@@ -15,12 +16,20 @@ from .models import AnalysisFinding
 logger = logging.getLogger(__name__)
 
 
-@dataclass 
+class PromptStrategy(Enum):
+    """Different strategies for prompting the LLM."""
+    AUTO = "auto"           # Automatically choose based on findings
+    CODE_FIXES = "code_fixes"     # Always use code fixes
+    DIFF_PATCHES = "diff_patches" # Always use diff patches
+    SINGLE_DIFF = "single_diff"   # Use single file diff generation
+
+
+@dataclass
 class AgentConfig:
-    """Configuration for the agent core."""
-    # Directories
+    """Configuration for the PatchPro agent."""
+    # Directory settings
     analysis_dir: Path = Path("artifact/analysis")
-    artifact_dir: Path = Path("artifact")
+    artifact_dir: Path = Path("artifact") 
     base_dir: Path = Path.cwd()
     
     # LLM settings
@@ -29,15 +38,20 @@ class AgentConfig:
     max_tokens: int = 4096
     temperature: float = 0.1
     
-    # Processing limits
+    # Processing settings
     max_findings: int = 20
     max_files_per_batch: int = 5
     
     # Output settings
     combine_patches: bool = True
     generate_summary: bool = True
-
-
+    
+    # New fields for structured responses
+    response_format: ResponseType = ResponseType.CODE_FIXES
+    prompt_strategy: PromptStrategy = PromptStrategy.AUTO
+    max_findings_per_request: int = 10
+    include_file_contents: bool = True
+    max_file_size_kb: int = 100
 class AgentCore:
     """Core orchestrator for the patch bot pipeline."""
     
@@ -184,11 +198,26 @@ class AgentCore:
                 logger.error(f"Failed to initialize LLM client: {e}")
                 return None
         
-        # Build prompt
-        prompt = self.prompt_builder.build_code_fix_prompt(
-            aggregator, 
-            file_reader=self.file_reader
-        )
+        # Determine effective strategy and build appropriate prompt
+        effective_strategy = self._get_effective_strategy(aggregator.findings)
+        logger.info(f"Using prompt strategy: {effective_strategy.value}")
+        
+        if effective_strategy == PromptStrategy.CODE_FIXES:
+            prompt = self.prompt_builder.build_code_fix_prompt(
+                aggregator, 
+                file_reader=self.file_reader
+            )
+            logger.info("Using code fixes prompt format")
+        elif effective_strategy in [PromptStrategy.DIFF_PATCHES, PromptStrategy.SINGLE_DIFF]:
+            # For diff patches, use batch approach
+            file_fixes = self._group_findings_by_file(aggregator)
+            file_contents = self._get_file_contents_for_findings(file_fixes)
+            prompt = self.prompt_builder.build_batch_diff_prompt(file_fixes, file_contents)
+            logger.info("Using diff patches prompt format")
+        else:
+            logger.error(f"Unknown prompt strategy: {effective_strategy}")
+            return None
+            
         system_prompt = self.prompt_builder._get_system_prompt()
         
         try:
@@ -216,18 +245,16 @@ class AgentCore:
         """
         logger.info("Parsing LLM response")
         
-        # Clean response content
-        cleaned_content = self.response_parser.clean_response_content(response_content)
+        # Parse response based on configured format
+        parsed_response = self.response_parser.parse_response(
+            response_content, 
+            expected_type=self.config.response_format
+        )
         
-        # Parse code fixes
-        code_fixes = self.response_parser.parse_code_fixes(cleaned_content)
+        logger.info(f"Parsed {len(parsed_response.code_fixes)} code fixes and {len(parsed_response.diff_patches)} diff patches")
         
-        # Parse diff patches
-        diff_patches = self.response_parser.parse_diff_patches(cleaned_content)
-        
-        logger.info(f"Parsed {len(code_fixes)} code fixes and {len(diff_patches)} diff patches")
-        
-        return code_fixes, diff_patches
+        # Return in the expected format for backward compatibility
+        return parsed_response.code_fixes, parsed_response.diff_patches
     
     def _generate_and_write_patches(self, code_fixes: List, diff_patches: List) -> Dict[str, any]:
         """Generate and write patch files.
@@ -365,6 +392,80 @@ Generated on: {Path.cwd()}/{self.config.artifact_dir}
             return "- None\n"
         
         return '\n'.join(f"- **{k}**: {v}" for k, v in d.items()) + '\n'
+    
+    def _get_effective_strategy(self, findings: List[AnalysisFinding]) -> PromptStrategy:
+        """Determine the effective prompt strategy to use and update response format accordingly.
+        
+        Args:
+            findings: List of findings to analyze
+            
+        Returns:
+            Effective strategy to use
+        """
+        if self.config.prompt_strategy != PromptStrategy.AUTO:
+            strategy = self.config.prompt_strategy
+        else:
+            # Auto strategy logic based on workload size
+            num_findings = len(findings)
+            unique_files = len(set(f.location.file for f in findings))
+            
+            # If many findings across many files, use diff patches for efficiency
+            if num_findings > 3 or unique_files > 3:
+                logger.info(f"Using DIFF_PATCHES strategy: {num_findings} findings across {unique_files} files")
+                strategy = PromptStrategy.DIFF_PATCHES
+            else:
+                # Default to code fixes for smaller, manageable sets
+                logger.info(f"Using CODE_FIXES strategy: {num_findings} findings across {unique_files} files")
+                strategy = PromptStrategy.CODE_FIXES
+            
+            # Update config to reflect the chosen strategy
+            self.config.prompt_strategy = strategy
+        
+        # Ensure response format matches the strategy
+        if strategy == PromptStrategy.CODE_FIXES:
+            self.config.response_format = ResponseType.CODE_FIXES
+        elif strategy in [PromptStrategy.DIFF_PATCHES, PromptStrategy.SINGLE_DIFF]:
+            self.config.response_format = ResponseType.DIFF_PATCHES
+            
+        return strategy
+
+    def _group_findings_by_file(self, aggregator: FindingAggregator) -> Dict[str, List[AnalysisFinding]]:
+        """Group findings by file path.
+        
+        Args:
+            aggregator: Processed findings aggregator
+            
+        Returns:
+            Dictionary mapping file paths to their findings
+        """
+        file_fixes = {}
+        for finding in aggregator.findings:
+            file_path = finding.location.file
+            if file_path not in file_fixes:
+                file_fixes[file_path] = []
+            file_fixes[file_path].append(finding)
+        return file_fixes
+    
+    def _get_file_contents_for_findings(self, file_fixes: Dict[str, List[AnalysisFinding]]) -> Dict[str, str]:
+        """Get file contents for files that have findings.
+        
+        Args:
+            file_fixes: Dictionary mapping file paths to their findings
+            
+        Returns:
+            Dictionary mapping file paths to their content
+        """
+        file_contents = {}
+        for file_path in file_fixes.keys():
+            try:
+                content = self.file_reader.read_file(file_path)
+                if content:
+                    file_contents[file_path] = content
+                else:
+                    logger.warning(f"Could not read content for file: {file_path}")
+            except Exception as e:
+                logger.error(f"Failed to read file {file_path}: {e}")
+        return file_contents
     
     def _setup_logging(self):
         """Setup logging configuration."""

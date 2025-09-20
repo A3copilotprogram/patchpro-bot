@@ -77,33 +77,22 @@ class PromptBuilder:
 
         prompt += """
 
-Please provide specific code fixes for these issues. For each fix:
+Please provide specific code fixes for these issues. Return your response as a valid JSON object with the following structure:
 
-1. **Identify the issue**: Briefly explain what the problem is
-2. **Provide the fix**: Show the exact code changes needed
-3. **Explain the rationale**: Why this fix addresses the issue
-
-Format your response as follows for each fix:
-
-## Fix #N: [Brief description]
-
-**File**: `path/to/file.py`
-**Lines**: X-Y
-**Issue**: [Description of the problem]
-
-**Original Code**:
-```python
-# Original problematic code (use EXACTLY what appears in the findings/analysis)
-```
-
-**Fixed Code**:
-```python
-# Fixed code
-```
-
-**Rationale**: [Explanation of why this fix works]
-
----
+{
+  "fixes": [
+    {
+      "fix_number": 1,
+      "description": "Brief description of the fix",
+      "file_path": "path/to/file.py",
+      "lines": "X-Y",
+      "issue": "Description of the problem",
+      "original_code": "Original problematic code (use EXACTLY what appears in the findings/analysis)",
+      "fixed_code": "Fixed code",
+      "rationale": "Explanation of why this fix works"
+    }
+  ]
+}
 
 Focus on:
 - Security vulnerabilities (highest priority)
@@ -111,8 +100,10 @@ Focus on:
 - Code style issues that affect readability
 - Performance improvements where applicable
 
-IMPORTANT: For the original code, use EXACTLY what is shown in the analysis findings above. 
-Generate minimal, focused fixes that address the specific issues without making unnecessary changes to unrelated code.
+IMPORTANT: 
+- For the original code, use EXACTLY what is shown in the analysis findings above
+- Generate minimal, focused fixes that address the specific issues without making unnecessary changes to unrelated code
+- Return only valid JSON, no additional text or formatting
 """
         
         return prompt
@@ -152,7 +143,15 @@ Generate minimal, focused fixes that address the specific issues without making 
 """
 
         prompt += """
-Please provide a unified diff (patch format) that fixes this issue. 
+Please provide a unified diff patch that fixes this issue. Return your response as a valid JSON object with the following structure:
+
+{
+  "patch": {
+    "file_path": "path/to/file.py",
+    "diff_content": "unified diff content starting with 'diff --git'",
+    "summary": "Brief description of changes made"
+  }
+}
 
 Requirements:
 - Use standard unified diff format (diff -u)
@@ -161,18 +160,7 @@ Requirements:
 - Ensure the fix follows Python best practices
 - Preserve existing code style and formatting where possible
 
-Output format:
-```diff
-diff --git a/{file_path} b/{file_path}
-index {hash}..{hash} {mode}
---- a/{file_path}
-+++ b/{file_path}
-@@ -X,Y +A,B @@
- context line
--removed line
-+added line
- context line
-```
+Return only valid JSON, no additional text or formatting.
 """
         
         return prompt
@@ -223,7 +211,17 @@ Files to fix:
 """
         
         prompt += """
-Please generate unified diff patches for each file that fix all the identified issues.
+Please generate unified diff patches for each file that fix all the identified issues. Return your response as a valid JSON object with the following structure:
+
+{
+  "patches": [
+    {
+      "file_path": "path/to/file.py",
+      "diff_content": "unified diff content starting with 'diff --git'",
+      "summary": "Brief description of changes made"
+    }
+  ]
+}
 
 Requirements:
 - Generate a separate diff for each file
@@ -233,25 +231,7 @@ Requirements:
 - Preserve existing code style
 - Address all issues in each file
 
-Output each diff in this format:
-
-### Patch for `filename.py`
-
-```diff
-diff --git a/filename.py b/filename.py
-index hash1..hash2 mode
---- a/filename.py
-+++ b/filename.py
-@@ -X,Y +A,B @@
- context
--old line
-+new line
- context
-```
-
-**Summary**: Brief description of changes made
-
----
+Return only valid JSON, no additional text or formatting.
 """
         
         return prompt
@@ -278,5 +258,7 @@ Guidelines:
 4. Provide clear explanations for changes
 5. Generate valid unified diff format
 6. Focus on the most impactful fixes first
+7. Always respond with valid JSON format as requested
+8. Never include additional text outside the requested JSON structure
 
-Be precise, thorough, and security-conscious in your responses."""
+Be precise, thorough, and security-conscious in your responses. Always return properly formatted JSON."""

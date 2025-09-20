@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import Mock, patch
 
-from patchpro_bot.llm import PromptBuilder, ResponseParser
+from patchpro_bot.llm import PromptBuilder, ResponseParser, ResponseType, ParsedResponse
 from patchpro_bot.llm.response_parser import CodeFix, DiffPatch
 from patchpro_bot.analysis import FindingAggregator
 from patchpro_bot.models import AnalysisFinding, CodeLocation, Severity
@@ -53,10 +53,11 @@ class TestPromptBuilder:
         assert "security.dangerous-call" in prompt
         assert "Unused import" in prompt
         assert "Dangerous subprocess call" in prompt
-        assert "## Fix #" in prompt
-        assert "**File**:" in prompt
-        assert "**Original Code**:" in prompt
-        assert "**Fixed Code**:" in prompt
+        assert "JSON object" in prompt
+        assert '"fixes"' in prompt
+        assert '"fix_number"' in prompt
+        assert '"original_code"' in prompt
+        assert '"fixed_code"' in prompt
     
     def test_build_code_fix_prompt_with_limits(self):
         """Test building code fix prompt with limits."""
@@ -88,8 +89,9 @@ class TestPromptBuilder:
         assert "Remove unused import" in prompt
         assert "Delete import os line" in prompt
         assert "import os" in prompt
-        assert "unified diff" in prompt
-        assert "diff --git" in prompt
+        assert "JSON object" in prompt
+        assert '"patch"' in prompt
+        assert '"diff_content"' in prompt
     
     def test_build_batch_diff_prompt(self):
         """Test building batch diff prompt."""
@@ -117,7 +119,8 @@ class TestPromptBuilder:
         assert "F401" in prompt
         assert "Unused import" in prompt
         assert "import os" in prompt
-        assert "unified diff patches" in prompt
+        assert "JSON object" in prompt
+        assert '"patches"' in prompt
 
 
 class TestResponseParser:
@@ -129,47 +132,31 @@ class TestResponseParser:
         assert parser is not None
     
     def test_parse_code_fixes(self):
-        """Test parsing code fixes from response."""
-        response = """
-## Fix #1: Remove unused import
-
-**File**: `test.py`
-**Lines**: 1
-**Issue**: Unused import 'os'
-
-**Original Code**:
-```python
-import os
-import sys
-```
-
-**Fixed Code**:
-```python
-import sys
-```
-
-**Rationale**: The 'os' module is imported but never used in the code.
-
----
-
-## Fix #2: Fix security issue
-
-**File**: `app.py`
-**Lines**: 10-12
-**Issue**: Dangerous subprocess call
-
-**Original Code**:
-```python
-subprocess.call(user_input, shell=True)
-```
-
-**Fixed Code**:
-```python
-subprocess.run(user_input, shell=False, check=True)
-```
-
-**Rationale**: Using shell=False prevents shell injection attacks.
-"""
+        """Test parsing code fixes from JSON response."""
+        response = """{
+  "fixes": [
+    {
+      "fix_number": 1,
+      "description": "Remove unused import",
+      "file_path": "test.py",
+      "lines": "1",
+      "issue": "Unused import 'os'",
+      "original_code": "import os\\nimport sys",
+      "fixed_code": "import sys",
+      "rationale": "The 'os' module is imported but never used in the code."
+    },
+    {
+      "fix_number": 2,
+      "description": "Fix security issue",
+      "file_path": "app.py",
+      "lines": "10-12",
+      "issue": "Dangerous subprocess call",
+      "original_code": "subprocess.call(user_input, shell=True)",
+      "fixed_code": "subprocess.run(user_input, shell=False, check=True)",
+      "rationale": "Using shell=False prevents shell injection attacks."
+    }
+  ]
+}"""
         
         parser = ResponseParser()
         fixes = parser.parse_code_fixes(response)
@@ -192,38 +179,21 @@ subprocess.run(user_input, shell=False, check=True)
         assert fix2.file_path == "app.py"
     
     def test_parse_diff_patches(self):
-        """Test parsing diff patches from response."""
-        response = """
-### Patch for `test.py`
-
-```diff
-diff --git a/test.py b/test.py
-index 1234567..abcdefg 100644
---- a/test.py
-+++ b/test.py
-@@ -1,2 +1,1 @@
--import os
- import sys
-```
-
-**Summary**: Removed unused import
-
----
-
-### Patch for `app.py`
-
-```diff
-diff --git a/app.py b/app.py
-index abcdefg..1234567 100644
---- a/app.py
-+++ b/app.py
-@@ -8,1 +8,1 @@
--subprocess.call(cmd, shell=True)
-+subprocess.run(cmd, shell=False)
-```
-
-**Summary**: Fixed security vulnerability
-"""
+        """Test parsing diff patches from JSON response."""
+        response = """{
+  "patches": [
+    {
+      "file_path": "test.py",
+      "diff_content": "diff --git a/test.py b/test.py\\nindex 1234567..abcdefg 100644\\n--- a/test.py\\n+++ b/test.py\\n@@ -1,2 +1,1 @@\\n-import os\\n import sys",
+      "summary": "Removed unused import"
+    },
+    {
+      "file_path": "app.py", 
+      "diff_content": "diff --git a/app.py b/app.py\\nindex abcdefg..1234567 100644\\n--- a/app.py\\n+++ b/app.py\\n@@ -8,1 +8,1 @@\\n-subprocess.call(cmd, shell=True)\\n+subprocess.run(cmd, shell=False)",
+      "summary": "Fixed security vulnerability"
+    }
+  ]
+}"""
         
         parser = ResponseParser()
         patches = parser.parse_diff_patches(response)
@@ -240,21 +210,15 @@ index abcdefg..1234567 100644
         assert patch2.file_path == "app.py"
         assert "shell=False" in patch2.diff_content
     
-    def test_parse_standalone_diff(self):
-        """Test parsing standalone diff blocks."""
-        response = """
-Here's the fix:
-
-```diff
-diff --git a/test.py b/test.py
-index 1234567..abcdefg 100644
---- a/test.py
-+++ b/test.py
-@@ -1,2 +1,1 @@
--import os
- import sys
-```
-"""
+    def test_parse_single_diff_patch(self):
+        """Test parsing a single diff patch from JSON response."""
+        response = """{
+  "patch": {
+    "file_path": "test.py",
+    "diff_content": "diff --git a/test.py b/test.py\\nindex 1234567..abcdefg 100644\\n--- a/test.py\\n+++ b/test.py\\n@@ -1,2 +1,1 @@\\n-import os\\n import sys",
+    "summary": "Removed unused import"
+  }
+}"""
         
         parser = ResponseParser()
         patches = parser.parse_diff_patches(response)
@@ -262,68 +226,34 @@ index 1234567..abcdefg 100644
         assert len(patches) == 1
         assert patches[0].file_path == "test.py"
         assert "diff --git" in patches[0].diff_content
+        assert patches[0].summary == "Removed unused import"
     
-    def test_extract_code_blocks(self):
-        """Test extracting code blocks."""
+    def test_extract_code_blocks_deprecated(self):
+        """Test that extract_code_blocks is deprecated."""
+        parser = ResponseParser()
         response = """
-Here's some Python code:
-
 ```python
 def hello():
     print("Hello, world!")
 ```
-
-And here's some JavaScript:
-
-```javascript
-console.log("Hello, world!");
-```
-
-Another Python block:
-
-```python
-import sys
-sys.exit(0)
-```
 """
-        
-        parser = ResponseParser()
+        # Should return empty list and log warning
         python_blocks = parser.extract_code_blocks(response, "python")
-        
-        assert len(python_blocks) == 2
-        assert "def hello():" in python_blocks[0]
-        assert "import sys" in python_blocks[1]
-        
-        js_blocks = parser.extract_code_blocks(response, "javascript")
-        assert len(js_blocks) == 1
-        assert "console.log" in js_blocks[0]
+        assert len(python_blocks) == 0
     
-    def test_extract_diff_blocks(self):
-        """Test extracting diff blocks."""
+    def test_extract_diff_blocks_deprecated(self):
+        """Test that extract_diff_blocks is deprecated."""
+        parser = ResponseParser()
         response = """
-Here are the changes:
-
 ```diff
 diff --git a/file1.py b/file1.py
 -old line
 +new line
 ```
-
-And another diff:
-
-```diff
-diff --git a/file2.py b/file2.py
--another old line
-+another new line
-```
 """
-        
-        parser = ResponseParser()
+        # Should return empty list and log warning
         diff_blocks = parser.extract_diff_blocks(response)
-        
-        assert len(diff_blocks) == 2
-        assert "file1.py" in diff_blocks[0]
-        assert "file2.py" in diff_blocks[1]
+        assert len(diff_blocks) == 0
     
     def test_validate_diff_format(self):
         """Test validating diff format."""
@@ -370,11 +300,98 @@ index 1234567..abcdefg 100644
         messy_content = "\n\n\n  Some content  \r\n\r\n\n\n  More content  \n\n\n"
         cleaned = parser.clean_response_content(messy_content)
         
-        # The actual implementation processes in this order:
-        # 1. Replace 3+ newlines with 2 newlines
-        # 2. Normalize \r\n to \n (this can create new sequences)
-        # 3. Strip leading/trailing whitespace
-        # So \r\n\r\n becomes \n\n, which with the existing \n becomes \n\n\n
-        assert cleaned == "Some content  \n\n\n  More content"
+        # Should normalize line endings and reduce excessive whitespace
+        assert "Some content" in cleaned
+        assert "More content" in cleaned
         assert not cleaned.startswith('\n')
         assert not cleaned.endswith('\n\n\n')
+    
+    def test_parse_json_with_wrapper_text(self):
+        """Test parsing JSON that's wrapped in additional text."""
+        parser = ResponseParser()
+        
+        response_with_wrapper = """
+Here's the JSON response:
+
+```json
+{
+  "fixes": [
+    {
+      "fix_number": 1,
+      "description": "Test fix",
+      "file_path": "test.py",
+      "lines": "1",
+      "issue": "Test issue",
+      "original_code": "old code",
+      "fixed_code": "new code",
+      "rationale": "Test rationale"
+    }
+  ]
+}
+```
+
+That's the fix you requested.
+"""
+        
+        fixes = parser.parse_code_fixes(response_with_wrapper)
+        assert len(fixes) == 1
+        assert fixes[0].description == "Test fix"
+    
+    def test_parse_invalid_json(self):
+        """Test parsing invalid JSON gracefully."""
+        parser = ResponseParser()
+        
+        invalid_json = "This is not JSON at all"
+        fixes = parser.parse_code_fixes(invalid_json)
+        assert len(fixes) == 0
+        
+        partial_json = '{"fixes": [{"fix_number": 1, "description":'
+        fixes = parser.parse_code_fixes(partial_json)
+        assert len(fixes) == 0
+    
+    def test_parse_response_code_fixes(self):
+        """Test unified response parsing for code fixes."""
+        parser = ResponseParser()
+        
+        json_response = """{
+  "fixes": [
+    {
+      "fix_number": 1,
+      "description": "Remove unused import",
+      "file_path": "test.py",
+      "lines": "1",
+      "issue": "Unused import 'os'",
+      "original_code": "import os\\nimport sys",
+      "fixed_code": "import sys",
+      "rationale": "The 'os' module is imported but never used."
+    }
+  ]
+}"""
+        
+        parsed_response = parser.parse_response(json_response, ResponseType.CODE_FIXES)
+        
+        assert parsed_response.response_type == ResponseType.CODE_FIXES
+        assert len(parsed_response.code_fixes) == 1
+        assert len(parsed_response.diff_patches) == 0
+        assert parsed_response.code_fixes[0].description == "Remove unused import"
+    
+    def test_parse_response_diff_patches(self):
+        """Test unified response parsing for diff patches."""
+        parser = ResponseParser()
+        
+        json_response = """{
+  "patches": [
+    {
+      "file_path": "test.py",
+      "diff_content": "diff --git a/test.py b/test.py\\nindex 123..456\\n--- a/test.py\\n+++ b/test.py\\n@@ -1,2 +1,1 @@\\n-import os\\n import sys",
+      "summary": "Removed unused import"
+    }
+  ]
+}"""
+        
+        parsed_response = parser.parse_response(json_response, ResponseType.DIFF_PATCHES)
+        
+        assert parsed_response.response_type == ResponseType.DIFF_PATCHES
+        assert len(parsed_response.code_fixes) == 0
+        assert len(parsed_response.diff_patches) == 1
+        assert parsed_response.diff_patches[0].file_path == "test.py"

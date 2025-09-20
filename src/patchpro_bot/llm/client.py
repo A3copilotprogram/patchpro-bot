@@ -64,6 +64,7 @@ class LLMClient:
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
+        use_json_mode: bool = True,
         **kwargs
     ) -> LLMResponse:
         """Generate code suggestions based on analysis findings.
@@ -71,6 +72,7 @@ class LLMClient:
         Args:
             prompt: User prompt with analysis findings
             system_prompt: Optional system prompt for instructions
+            use_json_mode: Whether to use JSON mode for structured output
             **kwargs: Additional parameters for the API call
             
         Returns:
@@ -92,8 +94,12 @@ class LLMClient:
             **kwargs
         }
         
+        # Add JSON mode if supported and requested
+        if use_json_mode and self._supports_json_mode():
+            api_params["response_format"] = {"type": "json_object"}
+        
         try:
-            logger.info(f"Sending request to {self.model}")
+            logger.info(f"Sending request to {self.model} (JSON mode: {use_json_mode and self._supports_json_mode()})")
             response = self.client.chat.completions.create(**api_params)
             
             # Extract response content
@@ -128,6 +134,7 @@ class LLMClient:
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
+        use_json_mode: bool = True,
         **kwargs
     ) -> LLMResponse:
         """Synchronous version of generate_suggestions.
@@ -135,6 +142,7 @@ class LLMClient:
         Args:
             prompt: User prompt with analysis findings
             system_prompt: Optional system prompt for instructions
+            use_json_mode: Whether to use JSON mode for structured output
             **kwargs: Additional parameters for the API call
             
         Returns:
@@ -156,8 +164,12 @@ class LLMClient:
             **kwargs
         }
         
+        # Add JSON mode if supported and requested
+        if use_json_mode and self._supports_json_mode():
+            api_params["response_format"] = {"type": "json_object"}
+        
         try:
-            logger.info(f"Sending request to {self.model}")
+            logger.info(f"Sending request to {self.model} (JSON mode: {use_json_mode and self._supports_json_mode()})")
             response = self.client.chat.completions.create(**api_params)
             
             # Extract response content
@@ -187,6 +199,25 @@ class LLMClient:
         except Exception as e:
             logger.error(f"Unexpected error calling LLM: {e}")
             raise
+    
+    def _supports_json_mode(self) -> bool:
+        """Check if the current model supports JSON mode.
+        
+        Returns:
+            True if JSON mode is supported, False otherwise
+        """
+        # Models that support JSON mode (as of 2024)
+        json_supported_models = [
+            "gpt-4o",
+            "gpt-4o-mini", 
+            "gpt-4-turbo",
+            "gpt-4-turbo-preview",
+            "gpt-4-1106-preview",
+            "gpt-3.5-turbo-1106",
+            "gpt-3.5-turbo",
+        ]
+        
+        return any(supported_model in self.model for supported_model in json_supported_models)
     
     def validate_api_key(self) -> bool:
         """Validate that the API key works.

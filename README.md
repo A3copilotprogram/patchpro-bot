@@ -366,8 +366,8 @@ export OPENAI_API_KEY="your-api-key-here"
 Place your Ruff and Semgrep JSON outputs in `artifact/analysis/`:
 ```bash
 mkdir -p artifact/analysis
-ruff check --format=json src/ > artifact/analysis/ruff_output.json
-semgrep --config=auto --json src/ > artifact/analysis/semgrep_output.json
+ruff check --format=json examples/src/ > artifact/analysis/ruff_output.json
+semgrep --config=auto --json examples/src/ > artifact/analysis/semgrep_output.json
 ```
 
 3. **Run the bot:**
