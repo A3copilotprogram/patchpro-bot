@@ -3,7 +3,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Any, Optional
 
 from ..models import AnalysisFinding, RuffFinding, SemgrepFinding
 from ..models.ruff import RuffRawFinding
