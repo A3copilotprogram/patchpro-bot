@@ -1,6 +1,5 @@
 """Command-line interface for PatchPro Bot."""
 
-
 import os
 import json
 from pathlib import Path
@@ -17,64 +16,86 @@ from .analyzer import FindingsAnalyzer, NormalizedFindings
 
 app = typer.Typer(help="PatchPro Bot - CI code-repair assistant")
 console = Console()
-        
-    except Exception as e:
-        rprint(f"[red]❌ Validation failed: {e}[/red]")
-        raise typer.Exit(1)
-        raise typer.Exit(1)
-# ...existing CLI commands (analyze, normalize, validate_schema, demo, _display_results) ...
 
-    
-    analysis_dir = examples_dir / "artifact" / "analysis"
-    artifact_dir = examples_dir / "artifact"
-    
-    # Check for API key
-    api_key = os.getenv("OPENAI_API_KEY")
+import asyncio
+
+@app.command()
+def run(
+    analysis_dir: Path = typer.Option(
+        Path("artifact/analysis"),
+        "--analysis-dir", "-a",
+        help="Directory containing analysis JSON files"
+    ),
+    artifact_dir: Path = typer.Option(
+        Path("artifact"),
+        "--artifact-dir", "-o",
+        help="Output directory for patches and reports"
+    ),
+    api_key: Optional[str] = typer.Option(
+        None,
+        "--api-key", "-k",
+        help="OpenAI API key (or set OPENAI_API_KEY env var)"
+    ),
+    model: str = typer.Option(
+        "gpt-4o-mini",
+        "--model", "-m",
+        help="OpenAI model to use"
+    ),
+    max_findings: int = typer.Option(
+        20,
+        "--max-findings", "-f",
+        help="Maximum number of findings to process"
+    ),
+    combine_patches: bool = typer.Option(
+        True,
+        "--combine/--separate",
+        help="Combine patches into single file or create separate files"
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose", "-v",
+        help="Enable verbose logging"
+    ),
+):
+    """Run the PatchPro Bot pipeline."""
+    if verbose:
+        import logging
+        logging.basicConfig(level=logging.DEBUG)
+    api_key = api_key or os.getenv("OPENAI_API_KEY")
     if not api_key:
-        rprint("[yellow]Warning: No OpenAI API key found. Set OPENAI_API_KEY to run full demo.[/yellow]")
-        rprint("Running validation only...")
-        
-        # Just validate the example data
-        from .analysis import AnalysisReader, FindingAggregator
-        
-        reader = AnalysisReader(analysis_dir)
-        findings = reader.read_all_findings()
-        
-        rprint(f"[green]✅ Demo data contains {len(findings)} findings[/green]")
-        
-        aggregator = FindingAggregator(findings)
-        context = aggregator.to_prompt_context()
-        
-        rprint("\n[blue]Example prompt context:[/blue]")
-        console.print(context[:500] + "..." if len(context) > 500 else context)
-        
-        return
-    
-    # Run full demo
-    rprint("[blue]🎮 Running PatchPro Bot demo with example data...[/blue]")
-    
+        rprint("[red]Error: OpenAI API key is required. Set OPENAI_API_KEY env var or use --api-key[/red]")
+        raise typer.Exit(1)
     config = AgentConfig(
         analysis_dir=analysis_dir,
         artifact_dir=artifact_dir,
-        base_dir=examples_dir,
         openai_api_key=api_key,
+        llm_model=model,
+        max_findings=max_findings,
+        combine_patches=combine_patches,
+    )
+    if not analysis_dir.exists():
+        rprint(f"[red]Error: Analysis directory does not exist: {analysis_dir}[/red]")
+        raise typer.Exit(1)
+    json_files = list(analysis_dir.glob("*.json"))
+    if not json_files:
+        rprint(f"[yellow]Warning: No JSON files found in {analysis_dir}[/yellow]")
+        rprint("Expected files like ruff_output.json, semgrep_output.json")
+    rprint("[blue]🚀 Starting PatchPro Bot pipeline...[/blue]")
+    try:
+        agent = AgentCore(config)
+        results = asyncio.run(agent.run())
+        _display_results(results)
+        if results["status"] == "success":
+            rprint("[green]✅ Pipeline completed successfully![/green]")
+        else:
+            rprint(f"[red]❌ Pipeline failed: {results.get('message', 'Unknown error')}[/red]")
+            raise typer.Exit(1)
+    except Exception as e:
+        rprint(f"[red]❌ Pipeline failed with error: {e}[/red]")
+        if verbose:
+            console.print_exception()
+        raise typer.Exit(1)
 
-
-import typer
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich import print as rprint
-import json
-import os
-from pathlib import Path
-from typing import List, Optional
-
-from . import AgentCore, AgentConfig
-from .analyzer import FindingsAnalyzer, NormalizedFindings
-
-app = typer.Typer(help="PatchPro Bot - CI code-repair assistant")
-console = Console()
 
 @app.command()
 def analyze(
@@ -211,7 +232,12 @@ def demo():
     )
     try:
         agent = AgentCore(config)
+<<<<<<< HEAD
         results = agent.run()
+=======
+        results = asyncio.run(agent.run())
+        
+>>>>>>> 5f58b4d (Making the LLM calls async for performance optimization)
         _display_results(results)
         if results["status"] == "success":
             rprint("[green]✅ Demo completed successfully![/green]")

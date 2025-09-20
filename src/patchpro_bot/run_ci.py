@@ -1,5 +1,6 @@
 """Legacy CI runner - now delegates to the new agent core."""
 
+import asyncio
 from pathlib import Path
 import os
 import logging
@@ -31,7 +32,7 @@ def main():
         )
         
         agent = AgentCore(config)
-        results = agent.run()
+        results = asyncio.run(agent.run())
         
         if results["status"] == "success":
             logger.info(f"Successfully processed {results['findings_count']} findings")
