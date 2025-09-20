@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
 import openai
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,7 @@ class LLMClient:
         if base_url:
             client_kwargs["base_url"] = base_url
             
-        self.client = OpenAI(**client_kwargs)
+        self.async_client = AsyncOpenAI(**client_kwargs)
         logger.info(f"Initialized LLM client with model: {self.model}")
     
     async def generate_suggestions(
@@ -100,77 +100,7 @@ class LLMClient:
         
         try:
             logger.info(f"Sending request to {self.model} (JSON mode: {use_json_mode and self._supports_json_mode()})")
-            response = self.client.chat.completions.create(**api_params)
-            
-            # Extract response content
-            choice = response.choices[0]
-            content = choice.message.content or ""
-            
-            # Extract usage information
-            usage = response.usage.model_dump() if response.usage else None
-            
-            logger.info(f"Received response with {len(content)} characters")
-            if usage:
-                logger.info(f"Token usage: {usage}")
-            
-            return LLMResponse(
-                content=content,
-                model=response.model,
-                usage=usage,
-                finish_reason=choice.finish_reason,
-            )
-            
-        except openai.RateLimitError as e:
-            logger.error(f"Rate limit exceeded: {e}")
-            raise
-        except openai.APIError as e:
-            logger.error(f"OpenAI API error: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error calling LLM: {e}")
-            raise
-    
-    def generate_suggestions_sync(
-        self,
-        prompt: str,
-        system_prompt: Optional[str] = None,
-        use_json_mode: bool = True,
-        **kwargs
-    ) -> LLMResponse:
-        """Synchronous version of generate_suggestions.
-        
-        Args:
-            prompt: User prompt with analysis findings
-            system_prompt: Optional system prompt for instructions
-            use_json_mode: Whether to use JSON mode for structured output
-            **kwargs: Additional parameters for the API call
-            
-        Returns:
-            LLM response with suggestions
-        """
-        messages = []
-        
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-            
-        messages.append({"role": "user", "content": prompt})
-        
-        # Merge kwargs with defaults
-        api_params = {
-            "model": self.model,
-            "messages": messages,
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            **kwargs
-        }
-        
-        # Add JSON mode if supported and requested
-        if use_json_mode and self._supports_json_mode():
-            api_params["response_format"] = {"type": "json_object"}
-        
-        try:
-            logger.info(f"Sending request to {self.model} (JSON mode: {use_json_mode and self._supports_json_mode()})")
-            response = self.client.chat.completions.create(**api_params)
+            response = await self.async_client.chat.completions.create(**api_params)
             
             # Extract response content
             choice = response.choices[0]
@@ -227,7 +157,7 @@ class LLMClient:
         """
         try:
             # Make a minimal API call to test the key
-            response = self.client.chat.completions.create(
+            self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": "Hello"}],
                 max_tokens=1,

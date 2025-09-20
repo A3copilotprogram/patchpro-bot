@@ -1,5 +1,6 @@
 """Core agent orchestrator for the patch bot pipeline."""
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -77,7 +78,7 @@ class AgentCore:
         # Setup logging
         self._setup_logging()
     
-    def run(self) -> Dict[str, any]:
+    async def run(self) -> Dict[str, any]:
         """Run the complete patch bot pipeline.
         
         Returns:
@@ -95,7 +96,7 @@ class AgentCore:
             aggregator = self._process_findings(findings)
             
             # Step 3: Generate suggestions using LLM
-            llm_response = self._generate_llm_suggestions(aggregator)
+            llm_response = await self._generate_llm_suggestions(aggregator)
             if not llm_response:
                 return {"status": "llm_failed", "message": "Failed to generate LLM suggestions"}
             
@@ -169,7 +170,7 @@ class AgentCore:
         
         return aggregator
     
-    def _generate_llm_suggestions(self, aggregator: FindingAggregator) -> Optional[str]:
+    async def _generate_llm_suggestions(self, aggregator: FindingAggregator) -> Optional[str]:
         """Generate suggestions using LLM.
         
         Args:
@@ -221,8 +222,8 @@ class AgentCore:
         system_prompt = self.prompt_builder._get_system_prompt()
         
         try:
-            # Generate suggestions
-            response = self.llm_client.generate_suggestions_sync(
+            # Generate suggestions asynchronously
+            response = await self.llm_client.generate_suggestions(
                 prompt=prompt,
                 system_prompt=system_prompt,
             )
@@ -475,7 +476,7 @@ Generated on: {Path.cwd()}/{self.config.artifact_dir}
         )
 
 
-def main():
+async def main():
     """Main entry point for the agent."""
     # Load configuration from environment
     config = AgentConfig(
@@ -486,7 +487,7 @@ def main():
     
     # Create and run agent
     agent = AgentCore(config)
-    results = agent.run()
+    results = await agent.run()
     
     # Print results
     print(f"Pipeline status: {results['status']}")
@@ -500,4 +501,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

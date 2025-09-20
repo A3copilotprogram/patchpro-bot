@@ -1,5 +1,6 @@
 
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Optional, List
@@ -172,7 +173,7 @@ def run(
     
     try:
         agent = AgentCore(config)
-        results = agent.run()
+        results = asyncio.run(agent.run())
         
         # Display results
         _display_results(results)
@@ -284,7 +285,7 @@ def demo():
     
     try:
         agent = AgentCore(config)
-        results = agent.run()
+        results = asyncio.run(agent.run())
         
         _display_results(results)
         
