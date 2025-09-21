@@ -1,11 +1,11 @@
 
 import pytest
-from patchpro_bot.test_sample import (
+from patchpro_bot import (
     add_numbers,
     string_formatting_issues,
     performance_issues,
     security_issues,
-    bad_exception_handling
+    bad_exception_handling,
 )
 
 def test_add_numbers():

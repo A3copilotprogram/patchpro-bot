@@ -2,9 +2,9 @@ name: PatchPro CI
 
 on:
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, develop, agent-dev ]
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, agent-dev ]
 
 jobs:
   analyze:
