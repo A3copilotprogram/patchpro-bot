@@ -1,0 +1,610 @@
+{
+  "findings": [
+    {
+      "id": "84aaf4a0a2b3",
+      "rule_id": "E401",
+      "rule_name": "E401",
+      "message": "Multiple imports on one line",
+      "severity": "error",
+      "category": "style",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 2,
+        "column": 1,
+        "end_line": 2,
+        "end_column": 15
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Split imports",
+        "replacements": [
+          {
+            "start": {
+              "line": 2,
+              "column": 1
+            },
+            "end": {
+              "line": 2,
+              "column": 15
+            },
+            "content": "import os\r\nimport sys"
+          }
+        ]
+      }
+    },
+    {
+      "id": "d391ed30c17f",
+      "rule_id": "I001",
+      "rule_name": "I001",
+      "message": "Import block is un-sorted or un-formatted",
+      "severity": "info",
+      "category": "import",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 2,
+        "column": 1,
+        "end_line": 6,
+        "end_column": 1
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Organize imports",
+        "replacements": [
+          {
+            "start": {
+              "line": 2,
+              "column": 1
+            },
+            "end": {
+              "line": 6,
+              "column": 1
+            },
+            "content": "import json\r\nimport os  # Multiple imports on one line (E401)\r\nimport sys\r\n\r\nimport unused_import  # Unused import (F401)\r\n\r\n"
+          }
+        ]
+      }
+    },
+    {
+      "id": "1a6256a44b19",
+      "rule_id": "F401",
+      "rule_name": "F401",
+      "message": "`os` imported but unused",
+      "severity": "error",
+      "category": "correctness",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 2,
+        "column": 8,
+        "end_line": 2,
+        "end_column": 10
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Remove unused import",
+        "replacements": [
+          {
+            "start": {
+              "line": 2,
+              "column": 1
+            },
+            "end": {
+              "line": 3,
+              "column": 1
+            },
+            "content": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "bd8837c9a4f0",
+      "rule_id": "F401",
+      "rule_name": "F401",
+      "message": "`sys` imported but unused",
+      "severity": "error",
+      "category": "correctness",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 2,
+        "column": 12,
+        "end_line": 2,
+        "end_column": 15
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Remove unused import",
+        "replacements": [
+          {
+            "start": {
+              "line": 2,
+              "column": 1
+            },
+            "end": {
+              "line": 3,
+              "column": 1
+            },
+            "content": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "acd176a4659b",
+      "rule_id": "F401",
+      "rule_name": "F401",
+      "message": "`json` imported but unused",
+      "severity": "error",
+      "category": "correctness",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 3,
+        "column": 8,
+        "end_line": 3,
+        "end_column": 12
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Remove unused import: `json`",
+        "replacements": [
+          {
+            "start": {
+              "line": 3,
+              "column": 1
+            },
+            "end": {
+              "line": 4,
+              "column": 1
+            },
+            "content": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "165db442887d",
+      "rule_id": "F401",
+      "rule_name": "F401",
+      "message": "`unused_import` imported but unused",
+      "severity": "error",
+      "category": "correctness",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 4,
+        "column": 8,
+        "end_line": 4,
+        "end_column": 21
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Remove unused import: `unused_import`",
+        "replacements": [
+          {
+            "start": {
+              "line": 4,
+              "column": 1
+            },
+            "end": {
+              "line": 5,
+              "column": 1
+            },
+            "content": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "58ad3dc840ce",
+      "rule_id": "SIM105",
+      "rule_name": "SIM105",
+      "message": "Use `contextlib.suppress(Exception)` instead of `try`-`except`-`pass`",
+      "severity": "warning",
+      "category": "correctness",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 16,
+        "column": 5,
+        "end_line": 19,
+        "end_column": 13
+      },
+      "source_tool": "ruff",
+      "suggestion": null
+    },
+    {
+      "id": "123dbd63b84f",
+      "rule_id": "F841",
+      "rule_name": "F841",
+      "message": "Local variable `result` is assigned to but never used",
+      "severity": "error",
+      "category": "correctness",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 17,
+        "column": 9,
+        "end_line": 17,
+        "end_column": 15
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Remove assignment to unused variable `result`",
+        "replacements": [
+          {
+            "start": {
+              "line": 17,
+              "column": 9
+            },
+            "end": {
+              "line": 17,
+              "column": 23
+            },
+            "content": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "id": "e381e38a6f07",
+      "rule_id": "E722",
+      "rule_name": "E722",
+      "message": "Do not use bare `except`",
+      "severity": "error",
+      "category": "style",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 18,
+        "column": 5,
+        "end_line": 18,
+        "end_column": 11
+      },
+      "source_tool": "ruff",
+      "suggestion": null
+    },
+    {
+      "id": "8d817ceac35b",
+      "rule_id": "W293",
+      "rule_name": "W293",
+      "message": "Blank line contains whitespace",
+      "severity": "warning",
+      "category": "style",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 20,
+        "column": 1,
+        "end_line": 20,
+        "end_column": 5
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Remove whitespace from blank line",
+        "replacements": [
+          {
+            "start": {
+              "line": 20,
+              "column": 1
+            },
+            "end": {
+              "line": 20,
+              "column": 5
+            },
+            "content": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "e224f9437f6b",
+      "rule_id": "UP032",
+      "rule_name": "UP032",
+      "message": "Use f-string instead of `format` call",
+      "severity": "warning",
+      "category": "correctness",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 24,
+        "column": 15,
+        "end_line": 24,
+        "end_column": 38
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Convert to f-string",
+        "replacements": [
+          {
+            "start": {
+              "line": 24,
+              "column": 15
+            },
+            "end": {
+              "line": 24,
+              "column": 38
+            },
+            "content": "f\"Hello {name}\""
+          }
+        ]
+      }
+    },
+    {
+      "id": "6bb14ba85d77",
+      "rule_id": "RET504",
+      "rule_name": "RET504",
+      "message": "Unnecessary assignment to `message` before `return` statement",
+      "severity": "warning",
+      "category": "correctness",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 25,
+        "column": 12,
+        "end_line": 25,
+        "end_column": 19
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Remove unnecessary assignment",
+        "replacements": [
+          {
+            "start": {
+              "line": 24,
+              "column": 5
+            },
+            "end": {
+              "line": 24,
+              "column": 14
+            },
+            "content": "return"
+          },
+          {
+            "start": {
+              "line": 25,
+              "column": 1
+            },
+            "end": {
+              "line": 26,
+              "column": 1
+            },
+            "content": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "392ada0d81f0",
+      "rule_id": "W293",
+      "rule_name": "W293",
+      "message": "Blank line contains whitespace",
+      "severity": "warning",
+      "category": "style",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 29,
+        "column": 1,
+        "end_line": 29,
+        "end_column": 5
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Remove whitespace from blank line",
+        "replacements": [
+          {
+            "start": {
+              "line": 29,
+              "column": 1
+            },
+            "end": {
+              "line": 29,
+              "column": 5
+            },
+            "content": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "02d6f6ba92db",
+      "rule_id": "UP031",
+      "rule_name": "UP031",
+      "message": "Use format specifiers instead of percent format",
+      "severity": "warning",
+      "category": "correctness",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 32,
+        "column": 13,
+        "end_line": 32,
+        "end_column": 65
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Replace with format specifiers",
+        "replacements": [
+          {
+            "start": {
+              "line": 32,
+              "column": 13
+            },
+            "end": {
+              "line": 32,
+              "column": 65
+            },
+            "content": "\"SELECT * FROM users WHERE name = '{}'\".format(user_input)"
+          }
+        ]
+      }
+    },
+    {
+      "id": "bb96b6775403",
+      "rule_id": "W293",
+      "rule_name": "W293",
+      "message": "Blank line contains whitespace",
+      "severity": "warning",
+      "category": "style",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 33,
+        "column": 1,
+        "end_line": 33,
+        "end_column": 5
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Remove whitespace from blank line",
+        "replacements": [
+          {
+            "start": {
+              "line": 33,
+              "column": 1
+            },
+            "end": {
+              "line": 33,
+              "column": 5
+            },
+            "content": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "25d78a0c3d56",
+      "rule_id": "RET504",
+      "rule_name": "RET504",
+      "message": "Unnecessary assignment to `even_numbers` before `return` statement",
+      "severity": "warning",
+      "category": "correctness",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 40,
+        "column": 12,
+        "end_line": 40,
+        "end_column": 24
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Remove unnecessary assignment",
+        "replacements": [
+          {
+            "start": {
+              "line": 39,
+              "column": 5
+            },
+            "end": {
+              "line": 39,
+              "column": 19
+            },
+            "content": "return"
+          },
+          {
+            "start": {
+              "line": 40,
+              "column": 1
+            },
+            "end": {
+              "line": 41,
+              "column": 1
+            },
+            "content": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "aff742d41fc3",
+      "rule_id": "W293",
+      "rule_name": "W293",
+      "message": "Blank line contains whitespace",
+      "severity": "warning",
+      "category": "style",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 45,
+        "column": 1,
+        "end_line": 45,
+        "end_column": 5
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Remove whitespace from blank line",
+        "replacements": [
+          {
+            "start": {
+              "line": 45,
+              "column": 1
+            },
+            "end": {
+              "line": 45,
+              "column": 5
+            },
+            "content": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "ee68fd43a5eb",
+      "rule_id": "W293",
+      "rule_name": "W293",
+      "message": "Blank line contains whitespace",
+      "severity": "warning",
+      "category": "style",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 57,
+        "column": 1,
+        "end_line": 57,
+        "end_column": 5
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Remove whitespace from blank line",
+        "replacements": [
+          {
+            "start": {
+              "line": 57,
+              "column": 1
+            },
+            "end": {
+              "line": 57,
+              "column": 5
+            },
+            "content": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "d010a8cf06b1",
+      "rule_id": "W292",
+      "rule_name": "W292",
+      "message": "No newline at end of file",
+      "severity": "warning",
+      "category": "style",
+      "location": {
+        "file": "E:\\Projects\\AI\\patchpro-bot\\test_sample.py",
+        "line": 59,
+        "column": 52,
+        "end_line": 59,
+        "end_column": 52
+      },
+      "source_tool": "ruff",
+      "suggestion": {
+        "message": "Add trailing newline",
+        "replacements": [
+          {
+            "start": {
+              "line": 59,
+              "column": 52
+            },
+            "end": {
+              "line": 59,
+              "column": 52
+            },
+            "content": "\r\n"
+          }
+        ]
+      }
+    }
+  ],
+  "metadata": {
+    "tool": "ruff",
+    "version": "0.5.7",
+    "total_findings": 19,
+    "timestamp": "2025-09-21T19:02:46.088425"
+  }
+}

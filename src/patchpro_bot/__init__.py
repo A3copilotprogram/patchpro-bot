@@ -1,1 +1,1 @@
-__all__ = ["run_ci"]
+__all__ = ["run_ci", "analyzer", "cli"]

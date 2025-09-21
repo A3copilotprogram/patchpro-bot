@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: patchpro-bot
+Version: 0.0.1
+Summary: CI code-repair assistant (comment-only in Sprint-0)
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: ruff==0.5.7
+Requires-Dist: semgrep==1.84.0
+Requires-Dist: typer==0.12.3
+Requires-Dist: pydantic==2.8.2
+Requires-Dist: rich==13.7.1
+Requires-Dist: httpx==0.27.2
+Dynamic: license-file
+
+# patchpro-bot
+PatchPro: CI code-repair assistant
