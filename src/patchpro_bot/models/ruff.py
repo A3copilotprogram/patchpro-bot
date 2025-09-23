@@ -28,7 +28,7 @@ class RuffFix(BaseModel):
 
 class RuffRawFinding(BaseModel):
     """Raw Ruff finding as returned by ruff JSON output."""
-    code: str = Field(..., description="Rule code")
+    code: Optional[str] = Field(None, description="Rule code")
     message: str = Field(..., description="Issue message")
     filename: str = Field(..., description="File path")
     location: RuffLocation = Field(..., description="Issue location")
@@ -65,7 +65,7 @@ class RuffFinding(AnalysisFinding):
         
         return cls(
             tool="ruff",
-            rule_id=raw.code,
+            rule_id=raw.code or "unknown",
             location=location,
             message=raw.message,
             severity=severity,
@@ -74,8 +74,11 @@ class RuffFinding(AnalysisFinding):
         )
     
     @staticmethod
-    def _infer_severity(rule_code: str) -> Severity:
+    def _infer_severity(rule_code: Optional[str]) -> Severity:
         """Infer severity based on Ruff rule code."""
+        if not rule_code:
+            return Severity.ERROR  # Default for syntax errors and other issues without codes
+            
         # Error codes that typically indicate errors
         error_prefixes = {"E", "F", "S", "B"}  # Pycodestyle, Pyflakes, Security, Bugbear
         warning_prefixes = {"W", "C", "N", "D"}  # Warnings, Complexity, Naming, Docstrings
@@ -90,8 +93,11 @@ class RuffFinding(AnalysisFinding):
             return Severity.INFO
     
     @staticmethod 
-    def _get_category(rule_code: str) -> str:
+    def _get_category(rule_code: Optional[str]) -> str:
         """Get category based on Ruff rule code prefix."""
+        if not rule_code:
+            return "syntax"  # Default for syntax errors
+            
         category_map = {
             "E": "style",
             "W": "style", 
