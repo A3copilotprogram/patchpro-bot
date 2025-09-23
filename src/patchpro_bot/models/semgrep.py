@@ -1,7 +1,7 @@
 """Semgrep JSON output models."""
 
-from typing import Optional, Any, Dict
-from pydantic import BaseModel, Field
+from typing import Optional, Any, Dict, Union
+from pydantic import BaseModel, Field, field_validator
 
 from .common import AnalysisFinding, CodeLocation, Severity
 
@@ -32,9 +32,25 @@ class SemgrepRawFinding(BaseModel):
     """Raw Semgrep finding as returned by semgrep JSON output."""
     check_id: str = Field(..., description="Rule ID")
     path: str = Field(..., description="File path")
-    start: SemgrepLocation = Field(..., description="Finding location")
-    end: SemgrepLocation = Field(..., description="Finding end location")
+    start: Union[SemgrepLocation, Dict[str, Any]] = Field(..., description="Finding location")
+    end: Union[SemgrepLocation, Dict[str, Any]] = Field(..., description="Finding end location")
     extra: SemgrepExtra = Field(..., description="Extra information")
+    
+    @field_validator('start', 'end', mode='before')
+    @classmethod
+    def parse_location(cls, v):
+        """Parse location that can be nested or flat format."""
+        if isinstance(v, dict):
+            # Handle flat format: {"line": X, "col": Y, "offset": Z}
+            if "line" in v and "col" in v and "start" not in v:
+                pos = SemgrepPosition(line=v["line"], col=v["col"], offset=v.get("offset"))
+                return SemgrepLocation(start=pos, end=pos)
+            # Handle nested format: {"start": {"line": X, "col": Y}, "end": {...}}
+            elif "start" in v and "end" in v:
+                start_pos = SemgrepPosition(**v["start"])
+                end_pos = SemgrepPosition(**v["end"])
+                return SemgrepLocation(start=start_pos, end=end_pos)
+        return v
     
     
 class SemgrepFinding(AnalysisFinding):
@@ -43,13 +59,30 @@ class SemgrepFinding(AnalysisFinding):
     @classmethod
     def from_raw(cls, raw: SemgrepRawFinding) -> "SemgrepFinding":
         """Convert raw Semgrep finding to unified format."""
+        # Handle both nested and flat location formats
+        if isinstance(raw.start, SemgrepLocation):
+            start_line = raw.start.start.line
+            start_col = raw.start.start.col
+        else:
+            # Fallback for flat format
+            start_line = raw.start.get("line", 1)
+            start_col = raw.start.get("col", 1)
+            
+        if isinstance(raw.end, SemgrepLocation):
+            end_line = raw.end.end.line
+            end_col = raw.end.end.col
+        else:
+            # Fallback for flat format
+            end_line = raw.end.get("line", start_line)
+            end_col = raw.end.get("col", start_col)
+        
         # Map Semgrep location to unified location
         location = CodeLocation(
             file=raw.path,
-            line=raw.start.start.line,
-            column=raw.start.start.col,
-            end_line=raw.end.end.line,
-            end_column=raw.end.end.col,
+            line=start_line,
+            column=start_col,
+            end_line=end_line,
+            end_column=end_col,
         )
         
         # Extract message
