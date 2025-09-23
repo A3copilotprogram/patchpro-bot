@@ -337,6 +337,7 @@ index 0000000..1111111 100644
             base_indent = 0
         
         adjusted_fixed_lines = []
+        current_indent = base_indent
         
         for line_idx, fixed_line in enumerate(fixed_lines):
             if not fixed_line.strip():
@@ -345,15 +346,30 @@ index 0000000..1111111 100644
             
             fixed_line_content = fixed_line.strip()
             
-            # Check if this is a context manager line
-            if 'with ' in fixed_line_content and fixed_line_content.endswith(':'):
-                # Apply base indentation to the with statement
+            # Check if this is a context manager line or other block statement
+            if (fixed_line_content.startswith('with ') or 
+                fixed_line_content.startswith('if ') or 
+                fixed_line_content.startswith('for ') or 
+                fixed_line_content.startswith('while ') or 
+                fixed_line_content.startswith('def ') or 
+                fixed_line_content.startswith('class ')) and fixed_line_content.endswith(':'):
+                # Apply base indentation to the block statement
                 adjusted_line = ' ' * base_indent + fixed_line_content
                 adjusted_fixed_lines.append(adjusted_line)
-            else:
-                # For all other lines, apply the base indentation consistently
-                # This ensures proper indentation regardless of what the LLM provided
+                # Next lines should be indented more (assuming 4-space indentation)
+                current_indent = base_indent + 4
+            elif (fixed_line_content.startswith('except') or 
+                  fixed_line_content.startswith('finally') or 
+                  fixed_line_content.startswith('else') or 
+                  fixed_line_content.startswith('elif')):
+                # These are at the same level as the original block
                 adjusted_line = ' ' * base_indent + fixed_line_content
+                adjusted_fixed_lines.append(adjusted_line)
+                if fixed_line_content.endswith(':'):
+                    current_indent = base_indent + 4
+            else:
+                # Regular line - use current indentation level
+                adjusted_line = ' ' * current_indent + fixed_line_content
                 adjusted_fixed_lines.append(adjusted_line)
         
         return adjusted_fixed_lines
@@ -553,8 +569,18 @@ index 0000000..1111111 100644
         git_header = f"""diff --git a/{file_path} b/{file_path}
 index {original_hash}..{modified_hash} 100644"""
         
-        # Combine header with diff
-        diff_content = git_header + '\n' + '\n'.join(diff_lines)
+        # Process diff lines to handle line endings correctly
+        processed_lines = []
+        for line in diff_lines:
+            if line.endswith('\n'):
+                # Content lines from difflib already have newlines
+                processed_lines.append(line.rstrip('\n'))
+            else:
+                # Header lines don't have newlines
+                processed_lines.append(line)
+        
+        # Combine header with diff using single newlines
+        diff_content = git_header + '\n' + '\n'.join(processed_lines)
         
         return diff_content
     
