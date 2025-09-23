@@ -15,7 +15,7 @@ class PromptBuilder:
     
     def __init__(self):
         """Initialize the prompt builder."""
-        self.system_prompt = self._get_system_prompt()
+        self.system_prompt = self.get_system_prompt()
     
     def build_code_fix_prompt(
         self,
@@ -35,6 +35,7 @@ class PromptBuilder:
         Returns:
             Formatted prompt string
         """
+        # TODO: Update this function to deal with max findings
         # Limit and prioritize findings
         limited_aggregator = (
             aggregator
@@ -51,17 +52,18 @@ class PromptBuilder:
         # This preserves the existing good behavior while fixing the example.py issue
         file_contents = {}
         if file_reader and limited_aggregator.findings:
-            # Only add file content for specific problematic files
-            problematic_files = {"examples/src/example.py"}  # Files that need full content
+            # Include file content for all files with findings to ensure accurate fixes
+            files_with_findings = set()
             for finding in limited_aggregator.findings:
-                file_path = finding.location.file
-                if file_path in problematic_files:
-                    try:
-                        content = file_reader.read_file(file_path)
-                        if content:
-                            file_contents[file_path] = content
-                    except Exception as e:
-                        logger.warning(f"Could not read file {file_path}: {e}")
+                files_with_findings.add(finding.location.file)
+            
+            for file_path in files_with_findings:
+                try:
+                    content = file_reader.read_file(file_path)
+                    if content:
+                        file_contents[file_path] = content
+                except Exception as e:
+                    logger.warning(f"Could not read file {file_path}: {e}")
         
         # Build the main prompt
         prompt = f"""I need your help to fix code issues found by static analysis tools (Ruff and Semgrep).
@@ -100,8 +102,10 @@ Focus on:
 - Performance improvements where applicable
 
 IMPORTANT: 
-- For the original code, use EXACTLY what is shown in the analysis findings above
+- For the original_code field, use EXACTLY what appears in the file content provided above, not what's shown in the analysis findings
+- If file content is provided above, use that as the source of truth for the exact code snippets
 - Generate minimal, focused fixes that address the specific issues without making unnecessary changes to unrelated code
+- Ensure the original_code matches EXACTLY what exists in the file (including indentation and spacing)
 - Return only valid JSON, no additional text or formatting
 """
         
@@ -235,7 +239,7 @@ Return only valid JSON, no additional text or formatting.
         
         return prompt
     
-    def _get_system_prompt(self) -> str:
+    def get_system_prompt(self) -> str:
         """Get the system prompt for LLM interactions.
         
         Returns:
