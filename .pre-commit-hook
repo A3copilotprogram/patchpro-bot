@@ -1,0 +1,5 @@
+#!/bin/sh
+# Pre-commit hook for PatchPro-Bot: run Ruff and Semgrep before commit
+
+ruff src/patchpro_bot || exit 1
+semgrep --config=semgrep.yml src/patchpro_bot || exit 1
