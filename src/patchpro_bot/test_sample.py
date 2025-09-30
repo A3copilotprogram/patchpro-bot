@@ -1,7 +1,18 @@
-# Sample Python file with intentional issues for testing PatchPro analyzer
+
+"""
+PatchPro: End-to-End Test Sample
+
+This file is used for local and CI testing of PatchPro Bot. It intentionally includes code quality, security, and style issues for the analyzer and patch pipeline.
+
+Example usage for local test:
+    python src/patchpro_bot/agent_core.py
+    # or run pytest to validate fixes
+
+See README.md for full instructions.
+"""
+
 import os, sys  # Multiple imports on one line (E401)
 import json
-# ...existing code...
 
 g = "global"
 
@@ -42,3 +53,13 @@ unused_variable = "This is not used anywhere"
 
 def test_add_numbers():
     assert add_numbers(2, 3) == 5
+
+# PatchPro: End-to-End Test Sample
+
+This file is used for local and CI testing of PatchPro Bot. It intentionally includes code quality, security, and style issues for the analyzer and patch pipeline.
+
+# Example usage for local test:
+#   python src/patchpro_bot/agent_core.py
+#   # or run pytest to validate fixes
+
+# See README.md for full instructions.

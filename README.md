@@ -47,9 +47,9 @@ The codebase follows the pipeline described in this mermaid diagram:
 flowchart TD
  A[patchpro-demo-repo PR] --> B[GitHub Actions CI] 
  subgraph Analysis
-   direction LR
-   C1[Ruff ▶ JSON]
-   C2[Semgrep ▶ JSON]
+  direction LR
+  C1[Ruff ▶ JSON]
+  C2[Semgrep ▶ JSON]
  end
  B --> C{Analyzers}
  C --> C1[Ruff: lint issues to JSON]
@@ -85,35 +85,35 @@ src/patchpro_bot/
 │   ├── prompts.py         # Prompt templates and builders
 │   └── response_parser.py # Parse LLM responses
 └── diff/                  # Diff generation and patch writing
-    ├── __init__.py
-    ├── file_reader.py     # Source file reading
-    ├── generator.py       # Unified diff generation
-    └── patch_writer.py    # Patch file writing
+   ├── __init__.py
+   ├── file_reader.py     # Source file reading
+   ├── generator.py       # Unified diff generation
+   └── patch_writer.py    # Patch file writing
 ```
 
 ## Installation
 
 1. **Clone the repository**:
-   ```bash
-   git clone <repository-url>
-   cd patchpro-bot
-   ```
+  ```bash
+  git clone <repository-url>
+  cd patchpro-bot
+  ```
 
 2. **Create and activate virtual environment**:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
+  ```bash
+  python -m venv .venv
+  source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+  ```
 
 3. **Install the package**:
-   ```bash
-   pip install -e .
-   ```
+  ```bash
+  pip install -e .
+  ```
 
 4. **Install development dependencies** (optional):
-   ```bash
-   pip install -e ".[dev]"
-   ```
+  ```bash
+  pip install -e ".[dev]"
+  ```
 
 ## Usage
 
@@ -587,3 +587,47 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ---
 
 **PatchPro Bot** - Intelligent code repair for modern CI/CD pipelines 🚀
+=======
+PatchPro: CI code-repair assistant
+
+## Usage
+
+### Local End-to-End Test
+
+1. Prepare analysis files:
+   - Run Ruff and Semgrep on your code or use the sample data in `tests/sample_data/`.
+   - Place outputs in `artifact/analysis/`.
+
+2. Set your OpenAI API key:
+   ```powershell
+   $env:OPENAI_API_KEY = "your-openai-api-key"
+   ```
+
+3. Run the agent core pipeline:
+   ```powershell
+   python src/patchpro_bot/agent_core.py
+   ```
+
+4. View generated patches and report in the `artifact/` directory.
+
+### Testing
+
+- Run all tests:
+  ```powershell
+  pytest
+  ```
+- Run a specific test module:
+  ```powershell
+  pytest tests/test_sample.py
+  ```
+
+## Demo Repository
+
+A minimal demo repo is provided in `../patchpro-demo-repo/` for end-to-end CI testing. See its README for details.
+
+## Migration Notes
+
+- The main CI entry point is now `agent_core.py`.
+- Legacy `run_ci.py` is deprecated and will be removed in future releases.
+- All scripts and workflows should use `agent_core.py` for analysis, patching, and reporting.
+>>>>>>> ec4b455 (Finalize PatchPro CI/devex and agent core integration for PR #7)

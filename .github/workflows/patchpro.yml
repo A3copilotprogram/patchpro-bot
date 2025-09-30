@@ -5,6 +5,8 @@ on:
     branches: [ main, develop, agent-dev ]
   push:
     branches: [ main, develop, agent-dev ]
+  issue_comment:
+    types: [created]
 
 jobs:
   analyze:
@@ -18,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt || true
+          pip install .
       - name: Run Ruff
         run: ruff check src/patchpro_bot
       - name: Run Semgrep
@@ -35,11 +37,108 @@ jobs:
         with:
           name: findings
           path: findings.json
-      - name: Run PatchPro Bot (CI)
+      - name: Run PatchPro Agent Core
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          if [ -f src/patchpro_bot/run_ci.py ]; then
-            python src/patchpro_bot/run_ci.py
+          python src/patchpro_bot/agent_core.py
+
+      - name: Check for Public Code Duplication
+        run: |
+          pip install requests
+          python scripts/check_public_code.py > public_code_report.txt || true
+
+      - name: Fail if Public Code Detected
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ -s public_code_report.txt ]; then
+            echo "::error file=public_code_report.txt::Public code duplication detected."
+            exit 1
           fi
+
+      - name: Comment on PR for Public Code Duplication
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            let files = fs.existsSync('public_code_report.txt') ? fs.readFileSync('public_code_report.txt', 'utf8') : '';
+            if (files.trim()) {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `:no_entry: PatchPro Bot detected code in your PR that appears to be a replica of public code. Please ensure all code is original and does not violate copyright or security policies.\n\nFiles:\n\n\`\`\`${files}\`\`\``
+              });
+            }
+
+      - name: Lint and Syntax Check
+        run: |
+          ruff check src/patchpro_bot > lint_report.txt || true
+          find src/patchpro_bot -name '*.py' -exec python -m py_compile {} + 2> syntax_report.txt || true
+
+      - name: Comment on PR for Lint/Syntax Errors
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            let lint = fs.existsSync('lint_report.txt') ? fs.readFileSync('lint_report.txt', 'utf8') : '';
+            let syntax = fs.existsSync('syntax_report.txt') ? fs.readFileSync('syntax_report.txt', 'utf8') : '';
+            let msg = '';
+            if (lint.trim()) msg += `\n**Lint Errors:**\n\n\`\`\`\n${lint}\n\`\`\``;
+            if (syntax.trim()) msg += `\n**Syntax Errors:**\n\n\`\`\`\n${syntax}\n\`\`\``;
+            if (msg) {
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `:x: PatchPro Bot detected code quality issues in your PR. Please address the following before merging:${msg}`
+              });
+            }
+
+      - name: Check for Required Modifications
+        if: always()
+        run: |
+          if grep -q 'error\|warning\|modification required' artifact/report.md; then
+            echo "::set-output name=pr_needs_modification::true"
+          else
+            echo "::set-output name=pr_needs_modification::false"
+          fi
+
+      - name: Comment on PR if Modifications Needed
+        if: steps.check_for_required_modifications.outputs.pr_needs_modification == 'true' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `:warning: PatchPro Bot detected issues that require modification. Please review the [PatchPro Report](artifact/report.md) and address the findings.`
+            })
+
+      - name: Notify PR Owner on Stage Transition
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            const ownerLogin = pr.data.user.login;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `:bell: @${ownerLogin}, your PR has moved to the next stage in the PatchPro pipeline.`
+            });
       - name: Upload PatchPro Report
         uses: actions/upload-artifact@v4
         with:
@@ -64,8 +163,38 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install .
       - name: Run tests
         env:
           PYTHONPATH: patchpro-bot/src
         run: pytest patchpro-bot/tests
+
+  slash-command:
+    if: github.event.issue.pull_request != null && startsWith(github.event.comment.body, '/patchpro')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+      - name: Run PatchPro Agent Core (Slash Command)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python src/patchpro_bot/agent_core.py
+      - name: Upload PatchPro Report (Slash Command)
+        uses: actions/upload-artifact@v4
+        with:
+          name: patchpro-report
+          path: artifact/report.md
+        if: always()
+      - name: Post Sticky PR Comment (Slash Command)
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: artifact/report.md
+        if: always()
