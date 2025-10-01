@@ -10,7 +10,6 @@ from typing import List, Dict, Optional, Tuple, AsyncGenerator
 from dataclasses import dataclass, field
 from enum import Enum
 import aiofiles
-from concurrent.futures import ThreadPoolExecutor
 
 from .analysis import AnalysisReader, FindingAggregator
 from .llm import LLMClient, PromptBuilder, ResponseParser, ResponseType
