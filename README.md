@@ -1,3 +1,30 @@
+# 🆕 Recent Changes (2025-10-01)
+
+- **Modernized CI/devex pipeline:**  
+  - Added robust GitHub Actions workflow for PRs and pushes to `main`, `develop`, and `agent-dev`.
+  - Automated static analysis with Ruff and Semgrep, artifact upload, and sticky PR comments.
+  - CI now runs PatchPro agent core, generates patches, and posts reports as PR comments.
+
+- **Agent Core Integration:**  
+  - Refactored to use `agent_core.py` as the main orchestrator for analysis, LLM, and patch generation.
+  - All pipeline logic is now centralized in the agent core for maintainability and extensibility.
+
+- **Analyzer Features:**  
+  - Added normalization and merging of findings from multiple tools.
+  - Improved support for new analysis tools and extensible findings schema.
+
+- **Enhanced PR Feedback:**  
+  - CI posts sticky comments with patch summaries and reports directly to PRs.
+  - Artifacts (patches, reports) are uploaded for every run.
+
+- **Security and Code Quality:**  
+  - Linting and static analysis are enforced in CI.
+  - Security-first prioritization in code suggestions.
+
+- **Test and Example Improvements:**  
+  - Improved test discovery and sample data.
+  - Example usage and test instructions updated.
+
 # patchpro-bot
 
 PatchPro: CI code-repair assistant that analyzes code using Ruff and Semgrep, then generates intelligent patch suggestions using LLM.

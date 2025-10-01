@@ -11,7 +11,7 @@ __version__ = "0.0.1"
 __all__ = [
 	"AgentCore", "AgentConfig", "PromptStrategy", "main",
 	"AnalysisReader", "FindingAggregator",
-	"LLMClient", "PromptBuilder", "ResponseParser", "ResponseTyp
+	"LLMClient", "PromptBuilder", "ResponseParser", "ResponseType",
 	"DiffGenerator", "FileReader", "PatchWriter",
 	"AnalysisFinding", "RuffFinding", "SemgrepFinding"
 ]

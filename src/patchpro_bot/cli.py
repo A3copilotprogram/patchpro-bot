@@ -1,23 +1,30 @@
 """Command-line interface for PatchPro Bot."""
-
-import os
+import asyncio
 import json
+import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import List, Optional
 
+import logging
 import typer
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
+from rich.table import Table
 from rich import print as rprint
 
 from . import AgentCore, AgentConfig
 from .analyzer import FindingsAnalyzer, NormalizedFindings
+from .analysis import AnalysisReader, FindingAggregator
 
-app = typer.Typer(help="PatchPro Bot - CI code-repair assistant")
 console = Console()
-
-import asyncio
+app = typer.Typer(
+    name="patchpro",
+    help="PatchPro: CI code-repair assistant",
+    add_completion=False,
+)
 
 @app.command()
 def run(
@@ -59,11 +66,13 @@ def run(
 ):
     """Run the PatchPro Bot pipeline."""
     if verbose:
-        import logging
         logging.basicConfig(level=logging.DEBUG)
     api_key = api_key or os.getenv("OPENAI_API_KEY")
     if not api_key:
-        rprint("[red]Error: OpenAI API key is required. Set OPENAI_API_KEY env var or use --api-key[/red]")
+        rprint(
+            "[red]Error: OpenAI API key is required. "
+            "Set OPENAI_API_KEY env var or use --api-key[/red]"
+        )
         raise typer.Exit(1)
     config = AgentConfig(
         analysis_dir=analysis_dir,
@@ -74,131 +83,64 @@ def run(
         combine_patches=combine_patches,
     )
     if not analysis_dir.exists():
-        rprint(f"[red]Error: Analysis directory does not exist: {analysis_dir}[/red]")
+        rprint(
+            f"[red]Error: Analysis directory does not exist: {analysis_dir}[/red]"
+        )
         raise typer.Exit(1)
     json_files = list(analysis_dir.glob("*.json"))
     if not json_files:
-        rprint(f"[yellow]Warning: No JSON files found in {analysis_dir}[/yellow]")
+        rprint(
+            f"[yellow]Warning: No JSON files found in {analysis_dir}[/yellow]"
+        )
         rprint("Expected files like ruff_output.json, semgrep_output.json")
-    rprint("[blue]🚀 Starting PatchPro Bot pipeline...[/blue]")
+    rprint("[blue]\ud83d\ude80 Starting PatchPro Bot pipeline...[/blue]")
     try:
         agent = AgentCore(config)
         results = asyncio.run(agent.run())
         _display_results(results)
         if results["status"] == "success":
-            rprint("[green]✅ Pipeline completed successfully![/green]")
+            rprint("[green]\u2705 Pipeline completed successfully![/green]")
         else:
-            rprint(f"[red]❌ Pipeline failed: {results.get('message', 'Unknown error')}[/red]")
+            rprint(f"[red]\u274c Pipeline failed: {results.get('message', 'Unknown error')}[/red]")
             raise typer.Exit(1)
     except Exception as e:
-        rprint(f"[red]❌ Pipeline failed with error: {e}[/red]")
+        rprint(f"[red]\u274c Pipeline failed with error: {e}[/red]")
         if verbose:
             console.print_exception()
         raise typer.Exit(1)
 
-
+# ...rest of the CLI commands and helpers as in the incoming branch...
+ 
 @app.command()
-def analyze(
-    paths: List[str] = typer.Argument(..., help="Files or directories to analyze"),
-    output: Optional[str] = typer.Option(None, "--output", "-o", help="Output file for normalized findings"),
-    format: str = typer.Option("json", "--format", "-f", help="Output format (json, table)"),
-    ruff_config: Optional[str] = typer.Option(None, "--ruff-config", help="Path to Ruff configuration file"),
-    semgrep_config: Optional[str] = typer.Option(None, "--semgrep-config", help="Path to Semgrep configuration file"),
-    tools: List[str] = typer.Option(["ruff", "semgrep"], "--tools", "-t", help="Tools to run (ruff, semgrep)"),
-    artifacts_dir: str = typer.Option("artifact/analysis", "--artifacts-dir", "-a", help="Directory to store raw analysis artifacts"),
-) -> None:
-    """Run static analysis and normalize findings."""
-    console.print("[bold blue]🔍 Running PatchPro Analysis...[/bold blue]")
-    artifacts_path = Path(artifacts_dir)
-    artifacts_path.mkdir(parents=True, exist_ok=True)
-    tool_outputs = {}
-    if "ruff" in tools:
-        console.print("Running Ruff analysis...")
-        # Placeholder: replace with actual Ruff integration
-        tool_outputs["ruff"] = []
-    if "semgrep" in tools:
-        console.print("Running Semgrep analysis...")
-        # Placeholder: replace with actual Semgrep integration
-        tool_outputs["semgrep"] = []
-    if not tool_outputs:
-        console.print("[yellow]⚠️  No analysis results found.[/yellow]")
-        return
-    console.print("Normalizing findings...")
-    analyzer = FindingsAnalyzer()
-    normalized_results = analyzer.normalize_findings(tool_outputs)
-    if len(normalized_results) > 1:
-        merged_findings = analyzer.merge_findings(normalized_results)
-    else:
-        merged_findings = normalized_results[0] if normalized_results else NormalizedFindings([], None)
-    if format == "json":
-        if output:
-            merged_findings.save(output)
-            console.print(f"[green]✅ Results saved to {output}[/green]")
-        else:
-            console.print(merged_findings.to_json())
-    elif format == "table":
-        _display_findings_table(merged_findings)
-    total_findings = len(merged_findings.findings)
-    console.print(f"\n[bold green]📊 Analysis Complete: {total_findings} finding(s)[/bold green]")
-
-@app.command()
-def normalize(
-    analysis_dir: str = typer.Argument(..., help="Directory containing analysis results"),
-    output: Optional[str] = typer.Option(None, "--output", "-o", help="Output file for normalized findings"),
-    format: str = typer.Option("json", "--format", "-f", help="Output format (json, table)"),
-) -> None:
-    """Normalize existing analysis results."""
-    console.print(f"[bold blue]🔄 Normalizing findings from {analysis_dir}...[/bold blue]")
-    analyzer = FindingsAnalyzer()
+def validate(
+    analysis_dir: Path = typer.Option(
+        Path("artifact/analysis"),
+        "--analysis-dir", "-a",
+        help="Directory containing analysis JSON files"
+    ),
+):
+    """Validate analysis JSON files."""
+    if not analysis_dir.exists():
+        rprint(f"[red]Error: Directory does not exist: {analysis_dir}[/red]")
+        raise typer.Exit(1)
+    reader = AnalysisReader(analysis_dir)
     try:
-        normalized_findings = analyzer.load_and_normalize(analysis_dir)
-        if format == "json":
-            if output:
-                normalized_findings.save(output)
-                console.print(f"[green]✅ Results saved to {output}[/green]")
-            else:
-                console.print(normalized_findings.to_json())
-        elif format == "table":
-            _display_findings_table(normalized_findings)
-        total_findings = len(normalized_findings.findings)
-        console.print(f"\n[bold green]📊 Normalization Complete: {total_findings} finding(s)[/bold green]")
-    except Exception as e:
-        console.print(f"[red]❌ Error normalizing findings: {e}[/red]")
-        raise typer.Exit(1)
-
-@app.command()
-def validate_schema(
-    findings_file: str = typer.Argument(..., help="Path to findings JSON file"),
-) -> None:
-    """Validate findings file against schema."""
-    console.print(f"[bold blue]✅ Validating {findings_file}...[/bold blue]")
-    try:
-        findings_path = Path(findings_file)
-        if not findings_path.exists():
-            console.print(f"[red]❌ File not found: {findings_file}[/red]")
-            raise typer.Exit(1)
-        findings_data = json.loads(findings_path.read_text())
-        required_keys = ["findings", "metadata"]
-        for key in required_keys:
-            if key not in findings_data:
-                console.print(f"[red]❌ Missing required key: {key}[/red]")
-                raise typer.Exit(1)
-        if not isinstance(findings_data["findings"], list):
-            console.print("[red]❌ 'findings' must be a list[/red]")
-            raise typer.Exit(1)
-        metadata = findings_data["metadata"]
-        required_metadata = ["tool", "version", "total_findings"]
-        for key in required_metadata:
-            if key not in metadata:
-                console.print(f"[red]❌ Missing metadata key: {key}[/red]")
-                raise typer.Exit(1)
-        console.print(f"[green]✅ Schema validation passed! Found {len(findings_data['findings'])} findings[/green]")
-    except json.JSONDecodeError:
-        console.print(f"[red]❌ Invalid JSON in {findings_file}[/red]")
-        raise typer.Exit(1)
-    except Exception as e:
-        console.print(f"[red]❌ Validation error: {e}[/red]")
-        raise typer.Exit(1)
+        findings = reader.read_all_findings()
+        rprint(f"[green]✅ Successfully validated {len(findings)} findings[/green]")
+        if findings:
+            aggregator = FindingAggregator(findings)
+            summary = aggregator.get_summary()
+            table = Table(title="Analysis Summary")
+            table.add_column("Metric", style="cyan")
+            table.add_column("Value", style="magenta")
+            table.add_row("Total Findings", str(summary["total_findings"]))
+            table.add_row("Tools", ", ".join(summary["by_tool"].keys()))
+            table.add_row("Affected Files", str(summary["affected_files"]))
+            console.print(table)
+    except Exception as exc:
+        rprint(f"[red]❌ Validation failed: {exc}[/red]")
+        raise typer.Exit(1) from exc
+>>>>>>> 6fb41f8 (docs: add summary of recent CI/devex and agent core changes (2025-10-01))
 
 @app.command()
 def demo():
@@ -211,9 +153,11 @@ def demo():
     artifact_dir = examples_dir / "artifact"
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        rprint("[yellow]Warning: No OpenAI API key found. Set OPENAI_API_KEY to run full demo.[/yellow]")
+        rprint(
+            "[yellow]Warning: No OpenAI API key found. "
+            "Set OPENAI_API_KEY to run full demo.[/yellow]"
+        )
         rprint("Running validation only...")
-        from .analysis import AnalysisReader, FindingAggregator
         reader = AnalysisReader(analysis_dir)
         findings = reader.read_all_findings()
         rprint(f"[green]✅ Demo data contains {len(findings)} findings[/green]")
@@ -232,22 +176,18 @@ def demo():
     )
     try:
         agent = AgentCore(config)
-<<<<<<< HEAD
-        results = agent.run()
-=======
         results = asyncio.run(agent.run())
-        
->>>>>>> 5f58b4d (Making the LLM calls async for performance optimization)
         _display_results(results)
         if results["status"] == "success":
             rprint("[green]✅ Demo completed successfully![/green]")
             rprint(f"Check {artifact_dir} for generated patches and reports")
         else:
-            rprint(f"[red]❌ Demo failed: {results.get('message', 'Unknown error')}")
+            rprint(f"[red]❌ Demo failed: {results.get('message', 'Unknown error')}[/red]")
     except Exception as e:
         rprint(f"[red]❌ Demo failed with error: {e}[/red]")
         raise typer.Exit(1)
 
+<<<<<<< HEAD
 def _display_findings_table(findings: NormalizedFindings) -> None:
     if not findings.findings:
         console.print("[yellow]No findings to display.[/yellow]")
@@ -293,6 +233,10 @@ def _display_findings_table(findings: NormalizedFindings) -> None:
     console.print(table)
 
 def _display_results(results: dict):
+=======
+def _display_results(results: dict):
+    """Display pipeline results in a nice format."""
+>>>>>>> 6fb41f8 (docs: add summary of recent CI/devex and agent core changes (2025-10-01))
     table = Table(title="Pipeline Results")
     table.add_column("Metric", style="cyan")
     table.add_column("Value", style="magenta")
@@ -308,4 +252,5 @@ def _display_results(results: dict):
     else:
         table.add_row("Error", results.get("message", "Unknown error"))
     console.print(table)
-    
+ 
+>>>>>>> 6fb41f8 (docs: add summary of recent CI/devex and agent core changes (2025-10-01))
