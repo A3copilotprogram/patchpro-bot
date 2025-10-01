@@ -8,10 +8,19 @@ from .models import AnalysisFinding, RuffFinding, SemgrepFinding
 from .run_ci import main
 
 __version__ = "0.0.1"
+from .test_sample import (
+    add_numbers,
+    string_formatting_issues,
+    performance_issues,
+    security_issues,
+    bad_exception_handling,
+)
+
 __all__ = [
-	"AgentCore", "AgentConfig", "PromptStrategy", "main",
-	"AnalysisReader", "FindingAggregator",
-	"LLMClient", "PromptBuilder", "ResponseParser", "ResponseType",
-	"DiffGenerator", "FileReader", "PatchWriter",
-	"AnalysisFinding", "RuffFinding", "SemgrepFinding"
+    "AgentCore", "AgentConfig", "PromptStrategy", "main",
+    "AnalysisReader", "FindingAggregator",
+    "LLMClient", "PromptBuilder", "ResponseParser", "ResponseType",
+    "DiffGenerator", "FileReader", "PatchWriter",
+    "AnalysisFinding", "RuffFinding", "SemgrepFinding",
+    "add_numbers", "string_formatting_issues", "performance_issues", "security_issues", "bad_exception_handling"
 ]
