@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 import os
 import logging
+from dotenv import load_dotenv
 
 from .agent_core import AgentCore, AgentConfig
 
@@ -13,10 +14,23 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Main entry point for CI runner."""
+    # Load environment variables from .env file
+    load_dotenv()
+    
     try:
         # Setup environment
         artifacts_dir = Path(os.environ.get("PP_ARTIFACTS", "artifact"))
         artifacts_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Determine base directory - if artifacts is absolute path, use its parent
+        # If relative, use current working directory
+        if artifacts_dir.is_absolute():
+            base_dir = artifacts_dir.parent.absolute()
+        else:
+            base_dir = Path.cwd().absolute()
+        
+        logger.info(f"Using base directory: {base_dir}")
+        logger.info(f"Using artifacts directory: {artifacts_dir}")
         
         # Check if we have analysis files to process
         analysis_dir = artifacts_dir / "analysis"
@@ -29,6 +43,7 @@ def main():
         config = AgentConfig(
             analysis_dir=analysis_dir,
             artifact_dir=artifacts_dir,
+            base_dir=base_dir,
         )
         
         agent = AgentCore(config)
