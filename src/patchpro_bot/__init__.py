@@ -7,7 +7,7 @@ from .diff import DiffGenerator, FileReader, PatchWriter
 from .models import AnalysisFinding, RuffFinding, SemgrepFinding
 from .run_ci import main
 
-__version__ = "0.0.1"
+__version__ = "9.9.9-CONFLICT"
 from .test_sample import (
     add_numbers,
     string_formatting_issues,
@@ -22,5 +22,10 @@ __all__ = [
     "LLMClient", "PromptBuilder", "ResponseParser", "ResponseType",
     "DiffGenerator", "FileReader", "PatchWriter",
     "AnalysisFinding", "RuffFinding", "SemgrepFinding",
-    "add_numbers", "string_formatting_issues", "performance_issues", "security_issues", "bad_exception_handling"
+    "add_numbers", "string_formatting_issues", "performance_issues", "security_issues", "bad_exception_handling",
+    "CONFLICT_SYMBOL"
 ]
+
+# BEGIN CONFLICT: Add a conflicting symbol
+CONFLICT_SYMBOL = "This is a simulated export conflict!"
+# END CONFLICT

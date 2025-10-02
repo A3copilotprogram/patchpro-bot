@@ -1,3 +1,12 @@
+# BEGIN CONFLICT: Duplicate run function with different logic
+@app.command()
+def run(
+    analysis_dir: Path = typer.Option(Path("conflict/analysis"), "--analysis-dir", help="Conflicting analysis dir option"),
+    verbose: bool = typer.Option(True, "--verbose", help="Conflicting verbose default"),
+):
+    """[CONFLICT] This is a conflicting run function for simulation purposes."""
+    rprint("[red]This is the conflicting run function![/red]")
+# END CONFLICT
 
 
 import asyncio
