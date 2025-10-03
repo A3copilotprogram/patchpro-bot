@@ -632,54 +632,64 @@ verbose = false
             hooks_dir = git_dir / "hooks"
             hooks_dir.mkdir(exist_ok=True)
             
-            # Pre-commit hook
-            pre_commit_hook = hooks_dir / "pre-commit"
-            hook_content = '''#!/bin/bash
-# PatchPro pre-commit hook
-echo "🔍 Running PatchPro analysis on staged files..."
+            # Post-index-change hook (triggers on git add)
+            post_index_hook = hooks_dir / "post-index-change"
+            post_index_content = '''#!/bin/bash
+# PatchPro post-index-change hook
+# Triggers background analysis when files are staged
 
-STAGED_FILES=$(git diff --cached --name-only | grep '\\.py$' | tr '\\n' ' ')
+# Get staged Python files
+STAGED_PY=$(git diff --cached --name-only --diff-filter=ACM | grep '\\.py$')
 
-if [ -n "$STAGED_FILES" ]; then
-    python -m patchpro_bot.cli diff-analyze --staged --format table
-    
-    # Check for critical issues
-    python -m patchpro_bot.cli diff-analyze --staged --format json > .patchpro/staged_analysis.json
-    CRITICAL=$(python -c "
-import json
-try:
-    with open('.patchpro/staged_analysis.json') as f:
-        data = json.load(f)
-    critical = sum(1 for f in data.get('findings', []) if f.get('severity') == 'error')
-    print(critical)
-except:
-    print(0)
-")
-    
-    if [ "$CRITICAL" -gt 0 ]; then
-        echo "❌ Found $CRITICAL critical issue(s). Run 'python -m patchpro_bot.cli run-ci --base-dir . --artifacts .patchpro' for fixes."
-        echo "Or use --no-verify to bypass this check."
-        exit 1
-    fi
-    
-    echo "✅ PatchPro pre-commit check passed"
-else
-    echo "ℹ️ No Python files staged"
+if [ -n "$STAGED_PY" ]; then
+    # Start background analysis (non-blocking)
+    nohup python -m patchpro_bot.cli analyze-staged --async > /dev/null 2>&1 &
 fi
 '''
             
+            with open(post_index_hook, 'w') as f:
+                f.write(post_index_content)
+            post_index_hook.chmod(0o755)
+            console.print(f"[green]✅ Installed post-index-change hook (triggers on git add)[/green]")
+            
+            # Smart pre-commit hook (checks status and shows interactive prompt)
+            pre_commit_hook = hooks_dir / "pre-commit"
+            pre_commit_content = '''#!/bin/bash
+# PatchPro smart pre-commit hook
+# Checks if analysis has findings and shows interactive prompt
+
+# Check if there are staged Python files
+STAGED_PY=$(git diff --cached --name-only --diff-filter=ACM | grep '\\.py$')
+
+if [ -n "$STAGED_PY" ]; then
+    # Run interactive prompt (checks status.json)
+    python -m patchpro_bot.cli pre-commit-prompt
+    exit $?
+fi
+
+# No Python files staged, allow commit
+exit 0
+'''
+            
             with open(pre_commit_hook, 'w') as f:
-                f.write(hook_content)
+                f.write(pre_commit_content)
             pre_commit_hook.chmod(0o755)
-            console.print(f"[green]✅ Installed pre-commit hook[/green]")
+            console.print(f"[green]✅ Installed smart pre-commit hook (interactive prompt)[/green]")
         else:
             console.print(f"[yellow]⚠️ Not a git repository, skipping hooks installation[/yellow]")
     
     console.print("\n[bold green]🎉 PatchPro initialization complete![/bold green]")
-    console.print("\n[bold]Next steps:[/bold]")
-    console.print("1. [cyan]python -m patchpro_bot.cli analyze .[/cyan] - Analyze current code")
-    console.print("2. [cyan]python -m patchpro_bot.cli run-ci --base-dir . --artifacts .patchpro[/cyan] - Generate patches")
-    console.print("3. [cyan]python -m patchpro_bot.cli watch .[/cyan] - Watch for changes")
+    
+    if with_hooks:
+        console.print("\n[bold cyan]Async Workflow Enabled:[/bold cyan]")
+        console.print("• [dim]git add file.py[/dim] → PatchPro analyzes in background")
+        console.print("• [dim]git commit[/dim] → Shows findings with interactive prompt")
+        console.print("• Non-blocking, CI-like experience!")
+    
+    console.print("\n[bold]Commands:[/bold]")
+    console.print("1. [cyan]python -m patchpro_bot.cli check-status[/cyan] - Check analysis status")
+    console.print("2. [cyan]python -m patchpro_bot.cli analyze-staged --with-llm[/cyan] - Generate patches for staged files")
+    console.print("3. [cyan]python -m patchpro_bot.cli run-ci --base-dir . --artifacts .patchpro[/cyan] - Full analysis")
     console.print("4. Edit [cyan].patchpro.toml[/cyan] to customize settings")
 
 
@@ -761,6 +771,299 @@ def status(
         console.print(f"[green]✅ patchpro_bot[/green]: {patchpro_bot.__version__}")
     except ImportError:
         console.print("[red]❌ patchpro_bot: Not installed[/red]")
+
+
+@app.command()
+def analyze_staged(
+    async_mode: bool = typer.Option(False, "--async", help="Run analysis in background"),
+    with_llm: bool = typer.Option(False, "--with-llm", help="Include LLM patch generation"),
+    artifacts_dir: str = typer.Option(".patchpro", "--artifacts", "-a", help="Artifacts directory"),
+) -> None:
+    """Analyze staged files (triggered by git add)."""
+    import subprocess
+    from datetime import datetime
+    
+    artifacts_path = Path(artifacts_dir)
+    artifacts_path.mkdir(parents=True, exist_ok=True)
+    
+    # Get staged Python files
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+            capture_output=True, text=True, check=True
+        )
+        staged_files = [f for f in result.stdout.strip().split('\n') if f.endswith('.py')]
+    except subprocess.CalledProcessError:
+        console.print("[red]❌ Failed to get staged files[/red]")
+        return
+    
+    if not staged_files:
+        # Write idle status
+        _write_status(artifacts_path, {
+            "status": "idle",
+            "message": "No Python files staged",
+            "timestamp": datetime.now().isoformat()
+        })
+        return
+    
+    if async_mode:
+        # Run in background
+        import multiprocessing
+        process = multiprocessing.Process(
+            target=_run_staged_analysis,
+            args=(staged_files, artifacts_path, with_llm)
+        )
+        process.start()
+        console.print(f"[dim]🤖 PatchPro analyzing {len(staged_files)} file(s) in background...[/dim]")
+    else:
+        # Run synchronously
+        _run_staged_analysis(staged_files, artifacts_path, with_llm)
+
+
+def _run_staged_analysis(staged_files: List[str], artifacts_path: Path, with_llm: bool = False):
+    """Run analysis on staged files (internal function)."""
+    from datetime import datetime
+    
+    # Write running status
+    _write_status(artifacts_path, {
+        "status": "running",
+        "files": staged_files,
+        "started_at": datetime.now().isoformat()
+    })
+    
+    try:
+        # Run analysis
+        analyzer = FindingsAnalyzer()
+        tool_outputs = {}
+        
+        # Run ruff
+        ruff_output = _run_ruff(staged_files, None, artifacts_path)
+        if ruff_output:
+            tool_outputs["ruff"] = ruff_output
+        
+        # Run semgrep
+        semgrep_output = _run_semgrep(staged_files, None, artifacts_path)
+        if semgrep_output:
+            tool_outputs["semgrep"] = semgrep_output
+        
+        # Normalize findings
+        if tool_outputs:
+            normalized_results = analyzer.normalize_findings(tool_outputs)
+            merged_findings = analyzer.merge_findings(normalized_results)
+            
+            # Save findings
+            findings_file = artifacts_path / "findings.json"
+            merged_findings.save(str(findings_file))
+            
+            # Count by severity
+            critical_count = sum(1 for f in merged_findings.findings if f.severity == "error")
+            warning_count = sum(1 for f in merged_findings.findings if f.severity == "warning")
+            
+            # Optionally run LLM for patch generation
+            patches_available = False
+            if with_llm and len(merged_findings.findings) > 0:
+                try:
+                    config = AgentConfig(
+                        analysis_dir=artifacts_path,
+                        artifact_dir=artifacts_path,
+                        base_dir=Path.cwd(),
+                    )
+                    agent = AgentCore(config)
+                    asyncio.run(agent.run())
+                    patches_available = True
+                except Exception as e:
+                    console.print(f"[yellow]⚠️  LLM patch generation failed: {e}[/yellow]")
+            
+            # Write completed status
+            _write_status(artifacts_path, {
+                "status": "completed",
+                "findings_count": len(merged_findings.findings),
+                "critical_count": critical_count,
+                "warning_count": warning_count,
+                "patches_available": patches_available,
+                "files_analyzed": staged_files,
+                "completed_at": datetime.now().isoformat()
+            })
+        else:
+            # No findings
+            _write_status(artifacts_path, {
+                "status": "completed",
+                "findings_count": 0,
+                "critical_count": 0,
+                "warning_count": 0,
+                "patches_available": False,
+                "files_analyzed": staged_files,
+                "completed_at": datetime.now().isoformat()
+            })
+    
+    except Exception as e:
+        # Write error status
+        _write_status(artifacts_path, {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        })
+
+
+def _write_status(artifacts_path: Path, status_data: dict):
+    """Write status to status.json file."""
+    status_file = artifacts_path / "status.json"
+    with open(status_file, 'w') as f:
+        json.dump(status_data, f, indent=2)
+
+
+def _read_status(artifacts_path: Path) -> dict:
+    """Read status from status.json file."""
+    status_file = artifacts_path / "status.json"
+    if status_file.exists():
+        with open(status_file, 'r') as f:
+            return json.load(f)
+    return {"status": "idle"}
+
+
+@app.command()
+def check_status(
+    artifacts_dir: str = typer.Option(".patchpro", "--artifacts", "-a", help="Artifacts directory"),
+) -> None:
+    """Check PatchPro analysis status."""
+    artifacts_path = Path(artifacts_dir)
+    status = _read_status(artifacts_path)
+    
+    if status["status"] == "idle":
+        console.print("[dim]No active analysis[/dim]")
+    elif status["status"] == "running":
+        console.print("[yellow]🤖 Analysis running...[/yellow]")
+        if "files" in status:
+            console.print(f"   Files: {', '.join(status['files'])}")
+    elif status["status"] == "completed":
+        findings_count = status.get("findings_count", 0)
+        critical_count = status.get("critical_count", 0)
+        
+        if findings_count == 0:
+            console.print("[green]✅ No issues found[/green]")
+        else:
+            console.print(f"[yellow]⚠️  Found {findings_count} issue(s)[/yellow]")
+            if critical_count > 0:
+                console.print(f"   🔴 {critical_count} critical")
+            if status.get("patches_available"):
+                console.print("   🔧 Patches available")
+    elif status["status"] == "error":
+        console.print(f"[red]❌ Analysis failed: {status.get('error', 'Unknown error')}[/red]")
+
+
+@app.command()
+def pre_commit_prompt(
+    artifacts_dir: str = typer.Option(".patchpro", "--artifacts", "-a", help="Artifacts directory"),
+) -> None:
+    """Interactive prompt for pre-commit when findings exist."""
+    from rich.prompt import Prompt
+    
+    artifacts_path = Path(artifacts_dir)
+    status = _read_status(artifacts_path)
+    
+    if status["status"] == "running":
+        console.print("[yellow]🤖 PatchPro is still analyzing...[/yellow]")
+        choice = Prompt.ask(
+            "Action",
+            choices=["wait", "commit", "cancel"],
+            default="commit"
+        )
+        
+        if choice == "wait":
+            import time
+            console.print("Waiting for analysis...")
+            for i in range(10):
+                time.sleep(1)
+                status = _read_status(artifacts_path)
+                if status["status"] != "running":
+                    break
+                console.print(f"  {i+1}s...")
+            
+            if status["status"] == "running":
+                console.print("[yellow]Analysis still running, proceeding with commit[/yellow]")
+                sys.exit(0)
+            else:
+                # Re-run prompt with completed status
+                pre_commit_prompt(artifacts_dir)
+                return
+        elif choice == "commit":
+            console.print("[dim]Proceeding with commit...[/dim]")
+            sys.exit(0)
+        else:
+            console.print("[yellow]Commit cancelled[/yellow]")
+            sys.exit(1)
+    
+    elif status["status"] == "completed":
+        findings_count = status.get("findings_count", 0)
+        critical_count = status.get("critical_count", 0)
+        
+        if findings_count == 0:
+            console.print("[green]✅ No issues found, proceeding with commit[/green]")
+            sys.exit(0)
+        
+        # Show findings
+        console.print(f"\n[yellow]⚠️  PatchPro found {findings_count} issue(s)[/yellow]")
+        if critical_count > 0:
+            console.print(f"   🔴 {critical_count} critical issue(s)")
+        if status.get("patches_available"):
+            console.print(f"   🔧 Patches available in {artifacts_dir}/")
+        
+        console.print()
+        
+        choice = Prompt.ask(
+            "Action",
+            choices=["view", "apply", "commit", "cancel"],
+            default="view"
+        )
+        
+        if choice == "view":
+            # Show findings table
+            findings_file = artifacts_path / "findings.json"
+            if findings_file.exists():
+                findings = NormalizedFindings.load(str(findings_file))
+                _display_findings_table(findings)
+            
+            # Ask again
+            choice2 = Prompt.ask(
+                "Action",
+                choices=["apply", "commit", "cancel"],
+                default="commit"
+            )
+            choice = choice2
+        
+        if choice == "apply":
+            # Apply patches
+            patches = list(artifacts_path.glob("patch_combined_*.diff"))
+            if patches:
+                latest_patch = max(patches, key=lambda p: p.stat().st_mtime)
+                console.print(f"[cyan]Applying patch: {latest_patch.name}[/cyan]")
+                result = subprocess.run(
+                    ["git", "apply", str(latest_patch)],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    console.print("[green]✅ Patch applied successfully[/green]")
+                    console.print("[yellow]Please stage the changes and commit again[/yellow]")
+                    sys.exit(1)  # Stop commit so user can stage patch changes
+                else:
+                    console.print(f"[red]❌ Failed to apply patch: {result.stderr}[/red]")
+                    console.print("[yellow]Proceeding with commit anyway[/yellow]")
+                    sys.exit(0)
+            else:
+                console.print("[yellow]No patches found[/yellow]")
+                sys.exit(0)
+        
+        elif choice == "commit":
+            console.print("[dim]Proceeding with commit despite findings...[/dim]")
+            sys.exit(0)
+        else:
+            console.print("[yellow]Commit cancelled[/yellow]")
+            sys.exit(1)
+    
+    else:
+        # Idle or error - allow commit
+        console.print("[dim]No analysis results, proceeding with commit[/dim]")
+        sys.exit(0)
 
 
 if __name__ == "__main__":
