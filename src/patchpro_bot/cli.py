@@ -15,7 +15,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import print as rprint
 
-from .analyzer import FindingsAnalyzer, NormalizedFindings
+from .analyzer import FindingsAnalyzer, NormalizedFindings, Finding, Metadata
 from .agent_core import AgentCore, AgentConfig
 
 app = typer.Typer(
@@ -25,6 +25,41 @@ app = typer.Typer(
 )
 
 console = Console()
+
+
+def _detect_tool_from_file(findings_path: Path) -> str:
+    """Detect which tool generated the findings file."""
+    filename = findings_path.name.lower()
+    
+    # Try to detect from filename
+    if 'ruff' in filename:
+        return 'ruff'
+    elif 'semgrep' in filename:
+        return 'semgrep'
+    elif 'pylint' in filename:
+        return 'pylint'
+    elif 'mypy' in filename:
+        return 'mypy'
+    
+    # Try to detect from content
+    try:
+        with open(findings_path, 'r') as f:
+            content = f.read(500)  # Read first 500 chars
+            content_lower = content.lower()
+            
+            if '"check":' in content_lower or '"code":' in content_lower and '"message":' in content_lower:
+                return 'ruff'
+            elif '"check_id":' in content_lower or 'semgrep' in content_lower:
+                return 'semgrep'
+            elif 'pylint' in content_lower:
+                return 'pylint'
+            elif 'mypy' in content_lower:
+                return 'mypy'
+    except:
+        pass
+    
+    # Default to generic
+    return 'static-analysis'
 
 
 @app.command()
@@ -128,8 +163,21 @@ def run_ci(
     tools: List[str] = typer.Option(["ruff", "semgrep"], "--tools", "-t", help="Tools to run"),
     ruff_config: Optional[str] = typer.Option(None, "--ruff-config", help="Path to Ruff configuration file"),
     semgrep_config: Optional[str] = typer.Option(None, "--semgrep-config", help="Path to Semgrep configuration file"),
+    from_findings: List[str] = typer.Option(None, "--from-findings", "-f", help="Use existing findings files instead of running tools"),
 ) -> None:
-    """Run complete CI pipeline with LLM integration."""
+    """Run complete CI pipeline with LLM integration.
+    
+    Supports two modes:
+    1. Run tools mode (default): Runs ruff/semgrep and generates patches
+    2. From findings mode: Uses existing tool outputs to generate patches
+    
+    Examples:
+        # Mode 1: Run everything
+        patchpro run-ci
+        
+        # Mode 2: Use existing findings
+        patchpro run-ci --from-findings ruff.json --from-findings semgrep.json
+    """
     
     console.print("[bold blue]🚀 Running PatchPro CI Pipeline...[/bold blue]")
     
@@ -142,25 +190,50 @@ def run_ci(
         analysis_path = artifacts_path / "analysis"
         analysis_path.mkdir(parents=True, exist_ok=True)
         
-        # Step 1: Run analysis and normalization
-        console.print("[bold cyan]🔍 Running analysis and normalization...[/bold cyan]")
+        # Determine mode: from-findings or run-tools
+        if from_findings:
+            # MODE 2: Use existing findings
+            console.print("[bold cyan]📂 Loading existing findings...[/bold cyan]")
+            
+            tool_outputs = {}
+            for findings_file in from_findings:
+                findings_path = Path(findings_file)
+                if not findings_path.exists():
+                    console.print(f"[red]❌ Findings file not found: {findings_file}[/red]")
+                    continue
+                
+                # Try to detect tool type from filename or content
+                tool_name = _detect_tool_from_file(findings_path)
+                console.print(f"Loading {tool_name} findings from {findings_file}")
+                
+                with open(findings_path, 'r') as f:
+                    tool_outputs[tool_name] = json.load(f)
+            
+            if not tool_outputs:
+                console.print("[red]❌ No valid findings files provided[/red]")
+                raise typer.Exit(1)
+            
+            console.print(f"[green]✅ Loaded findings from {len(tool_outputs)} tool(s)[/green]")
+        else:
+            # MODE 1: Run tools (original behavior)
+            console.print("[bold cyan]🔍 Running analysis and normalization...[/bold cyan]")
+            
+            # Run tools and collect outputs
+            tool_outputs = {}
+            
+            if "ruff" in tools:
+                console.print("Running Ruff analysis...")
+                ruff_output = _run_ruff([str(base_path)], ruff_config, analysis_path)
+                if ruff_output:
+                    tool_outputs["ruff"] = ruff_output
+            
+            if "semgrep" in tools:
+                console.print("Running Semgrep analysis...")
+                semgrep_output = _run_semgrep([str(base_path)], semgrep_config, analysis_path)
+                if semgrep_output:
+                    tool_outputs["semgrep"] = semgrep_output
         
-        # Run tools and collect outputs
-        tool_outputs = {}
-        
-        if "ruff" in tools:
-            console.print("Running Ruff analysis...")
-            ruff_output = _run_ruff([str(base_path)], ruff_config, analysis_path)
-            if ruff_output:
-                tool_outputs["ruff"] = ruff_output
-        
-        if "semgrep" in tools:
-            console.print("Running Semgrep analysis...")
-            semgrep_output = _run_semgrep([str(base_path)], semgrep_config, analysis_path)
-            if semgrep_output:
-                tool_outputs["semgrep"] = semgrep_output
-        
-        # Normalize findings
+        # Common path: Normalize findings (works for both modes)
         console.print("Normalizing findings...")
         analyzer = FindingsAnalyzer()
         normalized_results = analyzer.normalize_findings(tool_outputs)
@@ -232,6 +305,114 @@ def validate_schema(
         raise typer.Exit(1)
     except Exception as e:
         console.print(f"[red]❌ Validation error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def generate_patches(
+    findings_files: List[str] = typer.Argument(..., help="Paths to tool output files (ruff.json, semgrep.json, etc.)"),
+    artifacts_dir: str = typer.Option("artifact", "--artifacts", "-a", help="Artifacts directory for patches"),
+    base_dir: Optional[str] = typer.Option(None, "--base-dir", help="Base directory for code context"),
+) -> None:
+    """Generate AI-powered patches from existing static analysis findings.
+    
+    This command is designed for teams that already run static analysis tools
+    in their CI/CD pipeline. Instead of re-running the tools, PatchPro reads
+    the existing findings and generates patches.
+    
+    Examples:
+        # Generate patches from ruff and semgrep outputs
+        patchpro generate-patches ruff.json semgrep.json
+        
+        # With custom artifacts location
+        patchpro generate-patches findings/*.json --artifacts patches/
+        
+        # Typical CI integration
+        ruff check --output-format json . > ruff.json
+        semgrep --json . > semgrep.json
+        patchpro generate-patches ruff.json semgrep.json
+    """
+    
+    console.print("[bold blue]🤖 Generating patches from existing findings...[/bold blue]")
+    
+    try:
+        # Setup paths
+        artifacts_path = Path(artifacts_dir)
+        artifacts_path.mkdir(parents=True, exist_ok=True)
+        
+        base_path = Path(base_dir) if base_dir else Path.cwd()
+        analysis_path = artifacts_path / "analysis"
+        analysis_path.mkdir(parents=True, exist_ok=True)
+        
+        # Load all findings files
+        console.print(f"[cyan]📂 Loading findings from {len(findings_files)} file(s)...[/cyan]")
+        
+        tool_outputs = {}
+        for findings_file in findings_files:
+            findings_path = Path(findings_file)
+            if not findings_path.exists():
+                console.print(f"[yellow]⚠️  Skipping missing file: {findings_file}[/yellow]")
+                continue
+            
+            # Detect tool type
+            tool_name = _detect_tool_from_file(findings_path)
+            console.print(f"  • Loading {tool_name} findings from {findings_path.name}")
+            
+            try:
+                with open(findings_path, 'r') as f:
+                    tool_data = json.load(f)
+                    tool_outputs[tool_name] = tool_data
+                    
+                # Also save to analysis directory for AgentCore
+                tool_filename = f"{tool_name}_output.json"
+                (analysis_path / tool_filename).write_text(json.dumps(tool_data, indent=2))
+                
+            except json.JSONDecodeError:
+                console.print(f"[yellow]⚠️  Skipping invalid JSON: {findings_file}[/yellow]")
+                continue
+        
+        if not tool_outputs:
+            console.print("[red]❌ No valid findings files found[/red]")
+            raise typer.Exit(1)
+        
+        console.print(f"[green]✅ Loaded findings from {len(tool_outputs)} tool(s)[/green]")
+        
+        # Normalize findings
+        console.print("[cyan]🔄 Normalizing findings...[/cyan]")
+        analyzer = FindingsAnalyzer()
+        normalized_results = analyzer.normalize_findings(tool_outputs)
+        normalized_findings = analyzer.merge_findings(normalized_results)
+        
+        # Save normalized findings
+        normalized_findings.save(str(analysis_path / "normalized_findings.json"))
+        console.print(f"[green]✅ Normalized {len(normalized_findings.findings)} findings[/green]")
+        
+        if len(normalized_findings.findings) == 0:
+            console.print("[yellow]ℹ️  No findings to generate patches for[/yellow]")
+            return
+        
+        # Run LLM pipeline
+        console.print("[bold cyan]🤖 Generating AI patches...[/bold cyan]")
+        config = AgentConfig(
+            analysis_dir=analysis_path,
+            artifact_dir=artifacts_path,
+            base_dir=base_path,
+        )
+        
+        agent = AgentCore(config)
+        results = asyncio.run(agent.run())
+        
+        console.print(f"[green]✅ Patch generation complete: {results}[/green]")
+        
+        # Show output locations
+        patches = list(artifacts_path.glob("patch_*.diff"))
+        if patches:
+            console.print("\n[bold]Generated patches:[/bold]")
+            for patch in patches:
+                console.print(f"  📄 {patch}")
+        
+    except Exception as e:
+        console.print(f"[red]❌ Patch generation failed: {e}[/red]")
         raise typer.Exit(1)
 
 
@@ -628,9 +809,20 @@ verbose = false
     # Install git hooks
     if with_hooks:
         git_dir = project_path / ".git"
-        if git_dir.exists():
-            hooks_dir = git_dir / "hooks"
-            hooks_dir.mkdir(exist_ok=True)
+        
+        # Handle git worktrees (where .git is a file pointing to actual git dir)
+        actual_git_dir = git_dir
+        if git_dir.is_file():
+            # Read gitdir location from .git file
+            gitdir_line = git_dir.read_text().strip()
+            if gitdir_line.startswith('gitdir: '):
+                actual_git_dir = Path(gitdir_line[8:])  # Remove 'gitdir: ' prefix
+                if not actual_git_dir.is_absolute():
+                    actual_git_dir = (project_path / actual_git_dir).resolve()
+        
+        if actual_git_dir.exists() and actual_git_dir.is_dir():
+            hooks_dir = actual_git_dir / "hooks"
+            hooks_dir.mkdir(exist_ok=True, parents=True)
             
             # Post-index-change hook (triggers on git add)
             post_index_hook = hooks_dir / "post-index-change"
@@ -1020,7 +1212,26 @@ def pre_commit_prompt(
             # Show findings table
             findings_file = artifacts_path / "findings.json"
             if findings_file.exists():
-                findings = NormalizedFindings.load(str(findings_file))
+                findings_data = json.loads(findings_file.read_text())
+                # Create NormalizedFindings from dict
+                findings_list = [
+                    Finding(
+                        file=f['file'],
+                        line=f['line'],
+                        column=f.get('column', 1),
+                        severity=f['severity'],
+                        code=f['code'],
+                        message=f['message'],
+                        tool=f['tool']
+                    )
+                    for f in findings_data['findings']
+                ]
+                metadata = Metadata(
+                    tool=findings_data['metadata']['tool'],
+                    version=findings_data['metadata'].get('version', 'unknown'),
+                    total_findings=findings_data['metadata']['total_findings']
+                )
+                findings = NormalizedFindings(findings=findings_list, metadata=metadata)
                 _display_findings_table(findings)
             
             # Ask again
