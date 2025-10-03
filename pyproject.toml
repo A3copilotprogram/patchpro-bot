@@ -5,17 +5,29 @@ requires-python = ">=3.12"
 description = "CI code-repair assistant (comment-only in Sprint-0)"
 readme = "README.md"
 dependencies = [
-  "ruff==0.5.7",
-  "semgrep==1.84.0",
-  "typer==0.12.3",
-  "pydantic==2.8.2",
-  "rich==13.7.1",
-  "httpx==0.27.2",
-  "openai>=1.0.0"
+    "ruff~=0.13.1",
+    "semgrep~=1.137.0",
+    "typer~=0.19.2",
+    "pydantic~=2.11.9",
+    "rich~=13.5.2",
+    "httpx~=0.28.1",
+    "openai~=1.108.2",
+    "unidiff~=0.7.5",
+    "python-dotenv~=1.1.1",
+    "aiofiles~=24.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.0.0",
+  "pytest-cov>=4.0.0",
+  "pytest-asyncio>=0.21.0",
+  "black>=23.0.0",
+  "mypy>=1.0.0"
 ]
 
 [project.scripts]
-patchpro = "patchpro_bot.cli:main"
+patchpro = "patchpro_bot.cli:app"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
