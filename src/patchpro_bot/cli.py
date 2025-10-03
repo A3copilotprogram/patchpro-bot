@@ -125,6 +125,9 @@ def normalize(
 def run_ci(
     artifacts_dir: str = typer.Option("artifact", "--artifacts", "-a", help="Artifacts directory"),
     base_dir: Optional[str] = typer.Option(None, "--base-dir", help="Base directory for analysis"),
+    tools: List[str] = typer.Option(["ruff", "semgrep"], "--tools", "-t", help="Tools to run"),
+    ruff_config: Optional[str] = typer.Option(None, "--ruff-config", help="Path to Ruff configuration file"),
+    semgrep_config: Optional[str] = typer.Option(None, "--semgrep-config", help="Path to Semgrep configuration file"),
 ) -> None:
     """Run complete CI pipeline with LLM integration."""
     
@@ -137,8 +140,38 @@ def run_ci(
         
         base_path = Path(base_dir) if base_dir else Path.cwd()
         analysis_path = artifacts_path / "analysis"
+        analysis_path.mkdir(parents=True, exist_ok=True)
         
-        # Run agent core
+        # Step 1: Run analysis and normalization
+        console.print("[bold cyan]🔍 Running analysis and normalization...[/bold cyan]")
+        
+        # Run tools and collect outputs
+        tool_outputs = {}
+        
+        if "ruff" in tools:
+            console.print("Running Ruff analysis...")
+            ruff_output = _run_ruff([str(base_path)], ruff_config, analysis_path)
+            if ruff_output:
+                tool_outputs["ruff"] = ruff_output
+        
+        if "semgrep" in tools:
+            console.print("Running Semgrep analysis...")
+            semgrep_output = _run_semgrep([str(base_path)], semgrep_config, analysis_path)
+            if semgrep_output:
+                tool_outputs["semgrep"] = semgrep_output
+        
+        # Normalize findings
+        console.print("Normalizing findings...")
+        analyzer = FindingsAnalyzer()
+        normalized_results = analyzer.normalize_findings(tool_outputs)
+        normalized_findings = analyzer.merge_findings(normalized_results)
+        
+        # Save normalized findings
+        normalized_findings.save(str(analysis_path / "normalized_findings.json"))
+        console.print(f"[green]✅ Analysis complete: {len(normalized_findings.findings)} findings[/green]")
+        
+        # Step 2: Run LLM pipeline
+        console.print("[bold cyan]🤖 Running LLM pipeline...[/bold cyan]")
         config = AgentConfig(
             analysis_dir=analysis_path,
             artifact_dir=artifacts_path,
