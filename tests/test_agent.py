@@ -13,7 +13,7 @@ def test_imports():
     """Test that all modules can be imported."""
     print("Testing imports...")
     try:
-        from patchpro_bot.agent import (
+        from patchpro_bot.agent_core import (
             PatchProAgent,
             AgentConfig,
             ModelProvider,
@@ -32,17 +32,16 @@ def test_config():
     """Test AgentConfig creation (without API key)."""
     print("\nTesting AgentConfig...")
     try:
-        from patchpro_bot.agent import AgentConfig, ModelProvider
+        from patchpro_bot.agent_core import AgentConfig, ModelProvider
         
-        # Test with dummy API key
+        # Test with dummy API key - using new AgentConfig structure
         config = AgentConfig(
-            provider=ModelProvider.OPENAI,
-            model="gpt-4o-mini",
-            api_key="test-key",
+            openai_api_key="test-key",
+            llm_model="gpt-4o-mini",
             max_tokens=1000
         )
         
-        assert config.model == "gpt-4o-mini"
+        assert config.llm_model == "gpt-4o-mini"
         assert config.max_tokens == 1000
         assert config.temperature == 0.1
         print("✅ AgentConfig creation successful!")
@@ -55,7 +54,7 @@ def test_prompt_builder():
     """Test PromptBuilder functionality."""
     print("\nTesting PromptBuilder...")
     try:
-        from patchpro_bot.agent import PromptBuilder
+        from patchpro_bot.agent_core import PromptBuilder
         from patchpro_bot.analyzer import Finding, Location
         
         # Create a sample finding

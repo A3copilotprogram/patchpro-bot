@@ -1137,6 +1137,107 @@ Processing completed in: {processing_time:.2f} seconds
         )
 
 
+# ============================================================================
+# Backward Compatibility Aliases
+# ============================================================================
+# These aliases ensure compatibility with code that imported from agent.py
+
+# Main agent class alias
+PatchProAgent = AgentCore  # Legacy name for AgentCore
+
+# Enum alias
+class ModelProvider(Enum):
+    """Legacy enum for backward compatibility."""
+    OPENAI = "openai"
+
+
+# Helper function for backward compatibility
+def load_source_files(findings, base_path: Path) -> Dict[str, str]:
+    """
+    Legacy helper function for loading source files.
+    
+    Args:
+        findings: NormalizedFindings object
+        base_path: Base directory for resolving file paths
+    
+    Returns:
+        Dictionary mapping file paths to their contents
+    """
+    from .analyzer import NormalizedFindings
+    
+    source_files = {}
+    unique_files = set(f.location.file for f in findings.findings)
+    
+    for file_path in unique_files:
+        try:
+            # Try to resolve the path
+            full_path = base_path / file_path
+            if not full_path.exists():
+                # Try relative to current directory
+                full_path = Path(file_path)
+            
+            if full_path.exists() and full_path.is_file():
+                source_files[file_path] = full_path.read_text(encoding='utf-8')
+        except Exception as e:
+            logger.warning(f"Could not load {file_path}: {e}")
+    
+    return source_files
+
+
+# Legacy data classes for backward compatibility
+@dataclass
+class GeneratedFix:
+    """Legacy data class for backward compatibility."""
+    finding_id: str
+    file_path: str
+    original_code: str
+    fixed_code: str
+    explanation: str
+    diff: str
+    confidence: str = "medium"
+
+
+@dataclass
+class AgentResult:
+    """Legacy data class for backward compatibility."""
+    fixes: List[GeneratedFix]
+    summary: str
+    total_findings: int
+    fixes_generated: int
+    skipped: int
+    errors: List[str]
+
+
+class PromptBuilder:
+    """Legacy class for backward compatibility with agent.py tests."""
+    
+    SYSTEM_PROMPT = """You are PatchPro, an expert code repair assistant."""
+    
+    @staticmethod
+    def build_fix_prompt(findings: List, file_contents: Dict[str, str]) -> str:
+        """Build prompt for generating fixes (legacy compatibility)."""
+        from .llm.prompts import PromptBuilder as NewPromptBuilder
+        
+        # Delegate to new prompt builder
+        findings_data = []
+        for finding in findings:
+            findings_data.append({
+                "id": finding.id,
+                "file": finding.location.file,
+                "line": finding.location.line,
+                "rule": finding.rule_id,
+                "message": finding.message,
+                "severity": finding.severity,
+                "category": finding.category,
+            })
+        
+        return f"Analyze these {len(findings_data)} code issues and generate fixes."
+
+
+# ============================================================================
+# Main Entry Point
+# ============================================================================
+
 async def main():
     """Main entry point for the enhanced agent with scalability features."""
     # Load configuration from environment with scalability features
