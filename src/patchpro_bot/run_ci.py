@@ -1,4 +1,4 @@
-"""Legacy CI runner - now delegates to the new agent core."""
+"""Enhanced CI runner with integrated analysis normalization."""
 
 import asyncio
 from pathlib import Path
@@ -7,13 +7,14 @@ import logging
 from dotenv import load_dotenv
 
 from .agent_core import AgentCore, AgentConfig
+from .analyzer import FindingsAnalyzer
 
 
 logger = logging.getLogger(__name__)
 
 
 def main():
-    """Main entry point for CI runner."""
+    """Main entry point for CI runner with integrated analysis normalization."""
     # Load environment variables from .env file
     load_dotenv()
     
@@ -39,7 +40,21 @@ def main():
             _generate_placeholder_output(artifacts_dir)
             return
         
-        # Use the new agent core
+        # ENHANCEMENT: Use Denis's analyzer for finding normalization
+        try:
+            logger.info("Normalizing findings using integrated analyzer...")
+            analyzer = FindingsAnalyzer()
+            normalized_findings = analyzer.load_and_normalize(str(analysis_dir))
+            
+            # Save normalized findings for AgentCore to use
+            normalized_path = artifacts_dir / "normalized_findings.json"
+            normalized_findings.save(str(normalized_path))
+            logger.info(f"Saved {len(normalized_findings.findings)} normalized findings")
+            
+        except Exception as e:
+            logger.warning(f"Analyzer normalization failed, falling back to raw processing: {e}")
+        
+        # Use the agent core (enhanced to prefer normalized findings)
         config = AgentConfig(
             analysis_dir=analysis_dir,
             artifact_dir=artifacts_dir,
@@ -49,17 +64,11 @@ def main():
         agent = AgentCore(config)
         results = asyncio.run(agent.run())
         
-        if results["status"] == "success":
-            logger.info(f"Successfully processed {results['findings_count']} findings")
-            logger.info(f"Generated {results['patches_written']} patch files")
-        else:
-            logger.error(f"Agent failed: {results.get('message', 'Unknown error')}")
-            _generate_placeholder_output(artifacts_dir)
-            
+        logger.info(f"Agent processing completed: {results}")
+        
     except Exception as e:
         logger.error(f"CI runner failed: {e}")
-        artifacts_dir = Path(os.environ.get("PP_ARTIFACTS", "artifact"))
-        _generate_placeholder_output(artifacts_dir)
+        raise
 
 
 def _generate_placeholder_output(artifacts_dir: Path):

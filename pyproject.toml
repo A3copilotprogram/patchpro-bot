@@ -2,11 +2,11 @@
 name = "patchpro-bot"
 version = "0.0.1"
 requires-python = ">=3.12"
-description = "CI code-repair assistant (comment-only in Sprint-0)"
+description = "CI code-repair assistant with LLM integration and finding normalization"
 readme = "README.md"
 dependencies = [
     "ruff~=0.13.1",
-    "semgrep~=1.137.0",
+    "semgrep~=1.137.0", 
     "typer~=0.19.2",
     "pydantic~=2.11.9",
     "rich~=13.5.2",
@@ -20,7 +20,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=7.0.0",
-  "pytest-cov>=4.0.0",
+  "pytest-cov>=4.0.0", 
   "pytest-asyncio>=0.21.0",
   "black>=23.0.0",
   "mypy>=1.0.0"
@@ -28,6 +28,7 @@ dev = [
 
 [project.scripts]
 patchpro = "patchpro_bot.cli:app"
+
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
