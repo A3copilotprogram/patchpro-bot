@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 """PatchPro Bot - CI code-repair assistant."""
 
 from .agent_core import AgentCore, AgentConfig, PromptStrategy
