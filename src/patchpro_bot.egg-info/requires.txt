@@ -1,0 +1,17 @@
+ruff~=0.13.1
+semgrep~=1.137.0
+typer~=0.19.2
+pydantic~=2.11.9
+rich~=13.5.2
+httpx~=0.28.1
+openai~=1.108.2
+unidiff~=0.7.5
+python-dotenv~=1.1.1
+aiofiles~=24.1.0
+
+[dev]
+pytest>=7.0.0
+pytest-cov>=4.0.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+mypy>=1.0.0

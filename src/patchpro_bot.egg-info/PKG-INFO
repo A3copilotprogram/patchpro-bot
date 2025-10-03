@@ -1,3 +1,28 @@
+Metadata-Version: 2.4
+Name: patchpro-bot
+Version: 0.0.1
+Summary: CI code-repair assistant (comment-only in Sprint-0)
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: ruff~=0.13.1
+Requires-Dist: semgrep~=1.137.0
+Requires-Dist: typer~=0.19.2
+Requires-Dist: pydantic~=2.11.9
+Requires-Dist: rich~=13.5.2
+Requires-Dist: httpx~=0.28.1
+Requires-Dist: openai~=1.108.2
+Requires-Dist: unidiff~=0.7.5
+Requires-Dist: python-dotenv~=1.1.1
+Requires-Dist: aiofiles~=24.1.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.21.0; extra == "dev"
+Requires-Dist: black>=23.0.0; extra == "dev"
+Requires-Dist: mypy>=1.0.0; extra == "dev"
+Dynamic: license-file
+
 # patchpro-bot
 
 PatchPro: CI code-repair assistant that analyzes code using Ruff and Semgrep, then generates intelligent patch suggestions using LLM.

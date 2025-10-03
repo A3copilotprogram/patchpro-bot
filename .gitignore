@@ -1,5 +1,115 @@
-__pycache__/
+# Python
 *.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
 .venv/
-artifact/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.Python
+[Bb]in
+[Ii]nclude
+[Ll]ib
+[Ll]ib64
+[Ll]ocal
+[Ss]cripts
+pyvenv.cfg
+pip-selfcheck.json
+
+# Build artifacts
+build/
 dist/
+artifact/
+artifacts/
+*.egg-info/
+.eggs/
+sdist/
+var/
+wheels/
+share/python-wheels/
+.installed.cfg
+*.egg
+MANIFEST
+develop-eggs/
+downloads/
+eggs/
+parts/
+
+# Environment variables
+.env
+local_settings.py
+
+# IDE
+.idea/
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+.history/
+*.vsix
+*.code-workspace
+*.sln.iml
+.vs/
+
+# Testing
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+htmlcov/
+.tox/
+.nox/
+
+# Logs
+*.log
+*.tlog
+pip-log.txt
+pip-delete-this-directory.txt
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# Documentation
+docs/_build/
+
+# Other
+cython_debug/
+.config
+.data
