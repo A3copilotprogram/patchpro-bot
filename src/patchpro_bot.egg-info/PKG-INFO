@@ -11,7 +11,250 @@ Requires-Dist: typer==0.12.3
 Requires-Dist: pydantic==2.8.2
 Requires-Dist: rich==13.7.1
 Requires-Dist: httpx==0.27.2
+Requires-Dist: openai>=1.0.0
 Dynamic: license-file
 
-# patchpro-bot
-PatchPro: CI code-repair assistant
+# 🔧 PatchPro Bot
+
+**AI-Powered CI Code Repair Assistant**
+
+PatchPro automatically analyzes your code for issues and generates AI-powered fixes with explanations. Perfect for maintaining code quality in CI/CD pipelines.
+
+## ✨ Features
+
+- 🔍 **Static Analysis**: Integrates with Ruff and Semgrep for comprehensive code analysis
+- 🤖 **AI-Powered Fixes**: Uses OpenAI GPT models to generate contextual code fixes
+- 📊 **Normalized Findings**: Unified schema for findings from multiple tools
+- 🛡️ **Built-in Guardrails**: Safety limits for diff size and complexity
+- 📝 **PR-Ready Reports**: Generates formatted markdown for GitHub PR comments
+- ⚡ **Fast & Efficient**: Batch processing and smart caching
+
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/denis-mutuma/patchpro-bot.git
+cd patchpro-bot
+
+# Install in development mode
+pip install -e .
+```
+
+### Setup
+
+1. **Set your OpenAI API key:**
+```bash
+export OPENAI_API_KEY='your-api-key-here'
+```
+
+2. **Run analysis on your code:**
+```bash
+patchpro analyze your_file.py --output findings.json
+```
+
+3. **Generate AI-powered fixes:**
+```bash
+patchpro agent findings.json --output report.md
+```
+
+## 📖 Usage
+
+### Basic Workflow
+
+```bash
+# 1. Analyze code with Ruff and Semgrep
+patchpro analyze src/ --output findings.json --format json
+
+# 2. Generate fixes using AI agent
+patchpro agent findings.json --output fixes.md
+
+# 3. Review the generated report
+cat fixes.md
+```
+
+### Advanced Options
+
+```bash
+# Analyze with specific tools
+patchpro analyze src/ --tools ruff semgrep --output findings.json
+
+# Use custom configurations
+patchpro analyze src/ \
+  --ruff-config .ruff.toml \
+  --semgrep-config semgrep.yml \
+  --output findings.json
+
+# Generate fixes with specific model
+patchpro agent findings.json \
+  --model gpt-4o \
+  --output fixes.md
+
+# View findings as a table
+patchpro analyze src/ --format table
+```
+
+## 📋 Available Commands
+
+### `patchpro analyze`
+Run static analysis and normalize findings.
+
+**Options:**
+- `--output, -o`: Output file for normalized findings
+- `--format, -f`: Output format (json, table)
+- `--tools, -t`: Tools to run (ruff, semgrep)
+- `--ruff-config`: Path to Ruff configuration
+- `--semgrep-config`: Path to Semgrep configuration
+
+### `patchpro agent`
+Generate AI-powered code fixes from findings.
+
+**Options:**
+- `--output, -o`: Output file for markdown report
+- `--model, -m`: OpenAI model (default: gpt-4o-mini)
+- `--base-path, -b`: Base directory for file resolution
+- `--api-key`: OpenAI API key
+
+### `patchpro normalize`
+Normalize existing analysis results.
+
+**Options:**
+- `--output, -o`: Output file for normalized findings
+- `--format, -f`: Output format (json, table)
+
+### `patchpro validate-schema`
+Validate findings file against schema.
+
+## 🏗️ Project Structure
+
+```
+patchpro-bot/
+├── src/patchpro_bot/
+│   ├── analyzer.py      # Findings normalization
+│   ├── agent.py         # AI-powered fix generation
+│   ├── cli.py           # CLI interface
+│   └── run_ci.py        # CI integration
+├── schemas/
+│   └── findings.v1.json # Findings schema
+├── docs/
+│   ├── requirements.md  # Sprint-0 requirements
+│   └── agent_guide.md   # Agent usage guide
+├── examples/
+│   └── demo_workflow.sh # Demo script
+└── tests/
+    └── test_sample.py   # Sample test file
+```
+
+## 🔧 Configuration
+
+### Environment Variables
+
+Create a `.env` file (see `.env.example`):
+
+```bash
+# Required
+OPENAI_API_KEY=your-api-key-here
+
+# Optional
+PATCHPRO_MODEL=gpt-4o-mini
+PATCHPRO_MAX_TOKENS=2000
+PATCHPRO_TEMPERATURE=0.1
+```
+
+### Ruff Configuration
+
+Customize analysis in `.ruff.toml`:
+
+```toml
+line-length = 88
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "I", "N", "UP", "B"]
+ignore = ["E501"]
+```
+
+### Semgrep Configuration
+
+Customize rules in `semgrep.yml`:
+
+```yaml
+rules:
+  - id: custom-rule
+    pattern: |
+      dangerous_function(...)
+    message: "Avoid dangerous_function"
+    languages: [python]
+    severity: ERROR
+```
+
+## 📚 Documentation
+
+- [Agent Guide](docs/agent_guide.md) - Detailed agent usage
+- [Requirements Document](docs/requirements.md) - Sprint-0 specifications
+- [Schema Documentation](schemas/findings.v1.json) - Findings schema
+
+## 🤝 Contributing
+
+We welcome contributions! Here's how to get started:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Run tests and linting
+5. Commit your changes (`git commit -m 'Add amazing feature'`)
+6. Push to the branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🎯 Roadmap
+
+### Sprint-0 (Current)
+- ✅ Analyzer/Rules pod
+- ✅ Agent Core pod
+- 🚧 CI/DevEx integration
+- 🚧 Evaluation/QA framework
+
+### Future Sprints
+- Support for more languages (JavaScript, TypeScript, Go)
+- Additional LLM providers (Anthropic Claude, local models)
+- Interactive fix review mode
+- Automated PR creation
+- Learning from accepted/rejected fixes
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**"OpenAI API key not provided"**
+```bash
+export OPENAI_API_KEY='your-api-key'
+```
+
+**"Module 'openai' not found"**
+```bash
+pip install openai
+```
+
+**"Could not load source files"**
+- Ensure file paths in findings are relative to `--base-path`
+- Check file permissions
+
+## 📧 Support
+
+- **Issues**: [GitHub Issues](https://github.com/denis-mutuma/patchpro-bot/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/denis-mutuma/patchpro-bot/discussions)
+
+## 🌟 Acknowledgments
+
+- Built with [Ruff](https://github.com/astral-sh/ruff) and [Semgrep](https://semgrep.dev/)
+- Powered by [OpenAI](https://openai.com/)
+- CLI built with [Typer](https://typer.tiangolo.com/) and [Rich](https://rich.readthedocs.io/)
+
+---
+
+**Made with ❤️ by the PatchPro Team**
