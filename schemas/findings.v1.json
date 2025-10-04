@@ -1,0 +1,154 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PatchPro Normalized Findings Schema",
+  "description": "Unified schema for static analysis findings from Ruff, Semgrep, and other tools",
+  "type": "object",
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Finding"
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "tool": {
+          "type": "string",
+          "description": "The source tool that generated the finding (ruff, semgrep, etc.)"
+        },
+        "version": {
+          "type": "string",
+          "description": "Version of the source tool"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the analysis was performed"
+        },
+        "total_findings": {
+          "type": "integer",
+          "description": "Total number of findings in this result set"
+        }
+      },
+      "required": ["tool", "version", "total_findings"]
+    }
+  },
+  "required": ["findings", "metadata"],
+  "definitions": {
+    "Finding": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the finding (hash or tool-specific ID)"
+        },
+        "rule_id": {
+          "type": "string",
+          "description": "Rule/check identifier (e.g., F401 for Ruff, security.crypto-weak for Semgrep)"
+        },
+        "rule_name": {
+          "type": "string",
+          "description": "Human-readable rule name"
+        },
+        "message": {
+          "type": "string",
+          "description": "Description of the issue found"
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["error", "warning", "info", "note"],
+          "description": "Normalized severity level"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["style", "security", "performance", "correctness", "complexity", "import", "typing"],
+          "description": "Category of the issue"
+        },
+        "location": {
+          "$ref": "#/definitions/Location"
+        },
+        "suggestion": {
+          "type": "object",
+          "properties": {
+            "message": {
+              "type": "string",
+              "description": "Suggested fix description"
+            },
+            "replacements": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Replacement"
+              }
+            }
+          }
+        },
+        "source_tool": {
+          "type": "string",
+          "description": "Original tool that detected this finding"
+        }
+      },
+      "required": ["id", "rule_id", "message", "severity", "category", "location", "source_tool"]
+    },
+    "Location": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Relative file path from repository root"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Line number (1-indexed)"
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Column number (1-indexed)"
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "End line number for multi-line findings"
+        },
+        "end_column": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "End column number for multi-character findings"
+        }
+      },
+      "required": ["file", "line", "column"]
+    },
+    "Replacement": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "$ref": "#/definitions/Position"
+        },
+        "end": {
+          "$ref": "#/definitions/Position"
+        },
+        "content": {
+          "type": "string",
+          "description": "New content to replace the identified text"
+        }
+      },
+      "required": ["start", "end", "content"]
+    },
+    "Position": {
+      "type": "object",
+      "properties": {
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": ["line", "column"]
+    }
+  }
+}

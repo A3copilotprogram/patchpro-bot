@@ -3,7 +3,9 @@
 import logging
 import difflib
 import hashlib
+import subprocess
 from datetime import datetime
+from pathlib import Path
 from typing import List, Dict, Optional
 
 from ..llm.response_parser import DiffPatch, CodeFix
@@ -23,6 +25,65 @@ class DiffGenerator:
             file_reader: FileReader instance for loading source files
         """
         self.file_reader = file_reader or FileReader()
+        self._git_root_cache = None
+    
+    def _get_git_root(self, file_path: Optional[str] = None) -> Optional[Path]:
+        """Get the git repository root directory.
+        
+        Args:
+            file_path: Optional file path to start search from
+            
+        Returns:
+            Path to git root, or None if not in a git repo
+        """
+        if self._git_root_cache:
+            return self._git_root_cache
+        
+        try:
+            # Use git to find the repository root
+            cwd = Path(file_path).parent if file_path else Path.cwd()
+            result = subprocess.run(
+                ['git', 'rev-parse', '--show-toplevel'],
+                cwd=str(cwd),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            git_root = Path(result.stdout.strip())
+            self._git_root_cache = git_root
+            logger.debug(f"Found git root: {git_root}")
+            return git_root
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            logger.warning(f"Could not determine git root: {e}")
+            return None
+    
+    def _make_relative_path(self, file_path: str) -> str:
+        """Convert absolute path to relative path from git root.
+        
+        Args:
+            file_path: Absolute or relative file path
+            
+        Returns:
+            Path relative to git root, or original path if conversion fails
+        """
+        # If already relative, return as-is
+        if not Path(file_path).is_absolute():
+            return file_path
+        
+        git_root = self._get_git_root(file_path)
+        if not git_root:
+            # Fallback: just strip leading slash
+            return file_path.lstrip('/')
+        
+        try:
+            abs_path = Path(file_path).resolve()
+            rel_path = abs_path.relative_to(git_root)
+            logger.debug(f"Converted {file_path} -> {rel_path} (relative to {git_root})")
+            return str(rel_path)
+        except ValueError:
+            # Path is not relative to git root
+            logger.warning(f"Path {file_path} is not under git root {git_root}")
+            return file_path.lstrip('/')
     
     def generate_diff_from_fix(
         self,
@@ -113,10 +174,12 @@ class DiffGenerator:
         if not diff_content.startswith('diff --git'):
             # Add proper diff header if missing
             file_path = diff_patch.file_path
-            diff_content = f"""diff --git a/{file_path} b/{file_path}
+            # Convert to relative path from git root
+            relative_path = self._make_relative_path(file_path)
+            diff_content = f"""diff --git a/{relative_path} b/{relative_path}
 index 0000000..1111111 100644
---- a/{file_path}
-+++ b/{file_path}
+--- a/{relative_path}
++++ b/{relative_path}
 {diff_content}"""
         
         return diff_content
@@ -172,8 +235,8 @@ index 0000000..1111111 100644
                         modified_content,
                         file_path,
                     )
-                    # Normalize whitespace in the diff
-                    diff = self.normalize_diff_whitespace(diff)
+                    # NOTE: Do NOT normalize whitespace - spaces are meaningful in diff format!
+                    # diff = self.normalize_diff_whitespace(diff)
                     diffs[file_path] = diff
                     logger.info(f"Generated diff for {file_path} with {len(file_fixes)} fixes")
                 
@@ -552,12 +615,16 @@ index 0000000..1111111 100644
         original_hash = hashlib.md5(original.encode()).hexdigest()[:7]
         modified_hash = hashlib.md5(modified.encode()).hexdigest()[:7]
         
+        # Convert to relative path from git root
+        # Git diffs use relative paths: a/path/to/file
+        relative_path = self._make_relative_path(file_path)
+        
         # Generate unified diff
         diff_lines = list(difflib.unified_diff(
             original_lines,
             modified_lines,
-            fromfile=f"a/{file_path}",
-            tofile=f"b/{file_path}",
+            fromfile=f"a/{relative_path}",
+            tofile=f"b/{relative_path}",
             lineterm='',
         ))
         
@@ -566,10 +633,10 @@ index 0000000..1111111 100644
             return ""
         
         # Add git-style header
-        git_header = f"""diff --git a/{file_path} b/{file_path}
+        git_header = f"""diff --git a/{relative_path} b/{relative_path}
 index {original_hash}..{modified_hash} 100644"""
         
-        # Process diff lines to handle line endings correctly
+        # Process diff lines - strip newlines but preserve content
         processed_lines = []
         for line in diff_lines:
             if line.endswith('\n'):
@@ -581,6 +648,12 @@ index {original_hash}..{modified_hash} 100644"""
         
         # Combine header with diff using single newlines
         diff_content = git_header + '\n' + '\n'.join(processed_lines)
+        
+        # Ensure exactly one trailing newline
+        if not diff_content.endswith('\n'):
+            diff_content += '\n'
+        
+        logger.debug(f"Generated diff: {len(processed_lines)} lines, {len(diff_content)} chars")
         
         return diff_content
     

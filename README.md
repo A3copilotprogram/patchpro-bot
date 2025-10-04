@@ -1,6 +1,20 @@
 # patchpro-bot
 
-PatchPro: CI code-repair assistant that analyzes code using Ruff and Semgrep, then generates intelligent patch suggestions using LLM.
+PatchPro: CI code-repair assistant that analyzes code using Ruff and Semgrep, then generates intelligent patch suggestions using LLM with professional finding normalization and deduplication.
+
+## Quick Start
+
+**For Collaborators:** See [DEVELOPMENT.md](./DEVELOPMENT.md) for complete setup and testing instructions.
+
+**For End Users:** Try the [demo repository](https://github.com/A3copilotprogram/patchpro-demo-repo) to see PatchPro in action.
+
+```bash
+# Quick test with demo repo
+git clone <demo-repo-url>
+cd patchpro-demo-repo
+echo "OPENAI_API_KEY=your-key" > .env
+uv run --with /path/to/patchpro-bot-agent-dev python -m patchpro_bot.run_ci
+```
 
 ## Overview
 
@@ -559,4 +573,4 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-**PatchPro Bot** - Intelligent code repair for modern CI/CD pipelines 🚀
+**PatchPro Bot** - Intelligent code repair for modern CI/CD pipelines with professional finding normalization 🚀
