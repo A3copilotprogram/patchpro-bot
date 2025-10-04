@@ -19,7 +19,7 @@ from enum import Enum
 
 
 class Severity(Enum):
-    """Normalized severity levels."""
+    """Normalized severity levels for findings across all tools."""
     ERROR = "error"
     WARNING = "warning"
     INFO = "info"
