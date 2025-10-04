@@ -239,10 +239,18 @@ class RuffNormalizer:
             Path relative to git root
         """
         import subprocess
+        import os
+        
+        # DEBUG: Log to file for async debugging
+        with open("/tmp/patchpro_debug.log", "a") as f:
+            f.write(f"[RuffNormalizer-{os.getpid()}] INPUT: {file_path}\n")
+            f.write(f"[RuffNormalizer-{os.getpid()}] CWD: {os.getcwd()}\n")
         
         # If already relative, return as-is
         path_obj = Path(file_path)
         if not path_obj.is_absolute():
+            with open("/tmp/patchpro_debug.log", "a") as f:
+                f.write(f"[RuffNormalizer-{os.getpid()}] Already relative, returning: {file_path}\n")
             return file_path
         
         # Find git root
@@ -261,13 +269,21 @@ class RuffNormalizer:
             # Make relative to git root
             try:
                 rel_path = path_obj.resolve().relative_to(git_root)
+                with open("/tmp/patchpro_debug.log", "a") as f:
+                    f.write(f"[RuffNormalizer-{os.getpid()}] OUTPUT: {rel_path}\n")
                 return str(rel_path)
             except ValueError:
                 # Path not under git root, strip leading slash
-                return str(path_obj).lstrip('/')
-        except (subprocess.CalledProcessError, FileNotFoundError):
+                result_path = str(path_obj).lstrip('/')
+                with open("/tmp/patchpro_debug.log", "a") as f:
+                    f.write(f"[RuffNormalizer-{os.getpid()}] Outside git root, returning: {result_path}\n")
+                return result_path
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
             # Not in git repo or git not available, strip leading slash
-            return str(path_obj).lstrip('/')
+            result_path = str(path_obj).lstrip('/')
+            with open("/tmp/patchpro_debug.log", "a") as f:
+                f.write(f"[RuffNormalizer-{os.getpid()}] Git error: {e}, returning: {result_path}\n")
+            return result_path
 
     def normalize(self, ruff_output: Union[str, Dict, List]) -> NormalizedFindings:
         """Normalize Ruff JSON output."""
