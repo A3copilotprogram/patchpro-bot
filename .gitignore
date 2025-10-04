@@ -80,3 +80,5 @@ coverage.xml
 dmypy.json
 .pyre/
 .pytype/
+
+# PatchPro artifacts\n.patchpro/\n*.patch\n
