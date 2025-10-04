@@ -1,0 +1,26 @@
+[analysis]
+tools = ["ruff", "semgrep"]
+exclude_patterns = ["tests/", "__pycache__/", ".venv/", ".git/"]
+max_findings_per_file = 50
+severity_threshold = "info"
+
+[ruff]
+config_file = "pyproject.toml"
+select = ["E", "F", "W", "C90", "I", "N", "UP", "B", "A", "C4", "SIM", "ARG", "PTH"]
+line_length = 88
+target_version = "py312"
+
+[semgrep]
+config = ".semgrep.yml"
+
+[llm]
+model = "gpt-4o-mini"
+max_tokens = 4000
+temperature = 0.1
+api_key_env = "OPENAI_API_KEY"
+
+[output]
+artifacts_dir = ".patchpro"
+format = "table"
+include_patches = true
+verbose = false
