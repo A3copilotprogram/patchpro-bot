@@ -3,6 +3,11 @@ Analyzer module for normalizing static analysis findings from Ruff, Semgrep and 
 
 This module provides normalization of findings from multiple static analysis tools
 into a unified schema, with proper path normalization relative to git root.
+
+Key features:
+- Normalizes findings from ruff and semgrep
+- Converts absolute paths to relative paths from git root
+- Provides unified Finding schema for downstream processing
 """
 import json
 import hashlib
