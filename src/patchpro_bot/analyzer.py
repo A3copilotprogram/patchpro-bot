@@ -268,7 +268,13 @@ class RuffNormalizer:
             
             # Make relative to git root
             try:
-                rel_path = path_obj.resolve().relative_to(git_root)
+                resolved_path = path_obj.resolve()
+                with open("/tmp/patchpro_debug.log", "a") as f:
+                    f.write(f"[RuffNormalizer-{os.getpid()}] RESOLVED PATH: {resolved_path}\n")
+                    f.write(f"[RuffNormalizer-{os.getpid()}] GIT ROOT: {git_root}\n")
+                    f.write(f"[RuffNormalizer-{os.getpid()}] IS RESOLVED UNDER GIT ROOT? {resolved_path.is_relative_to(git_root) if hasattr(resolved_path, 'is_relative_to') else 'N/A'}\n")
+                
+                rel_path = resolved_path.relative_to(git_root)
                 with open("/tmp/patchpro_debug.log", "a") as f:
                     f.write(f"[RuffNormalizer-{os.getpid()}] OUTPUT: {rel_path}\n")
                 return str(rel_path)
