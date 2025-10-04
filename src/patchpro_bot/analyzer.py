@@ -231,16 +231,24 @@ class RuffNormalizer:
             Path relative to git root
         """
         import subprocess
+        import sys
+        
+        # DEBUG logging
+        print(f"[DEBUG] _normalize_file_path called with: {file_path}", file=sys.stderr)
         
         # If already relative, return as-is
         path_obj = Path(file_path)
         if not path_obj.is_absolute():
+            print(f"[DEBUG] Path is relative, returning as-is: {file_path}", file=sys.stderr)
             return file_path
+        
+        print(f"[DEBUG] Path is absolute, will normalize", file=sys.stderr)
         
         # Find git root
         try:
             # Try from the file's directory
             file_dir = path_obj.parent if path_obj.is_file() else path_obj
+            print(f"[DEBUG] Using directory for git root: {file_dir}", file=sys.stderr)
             result = subprocess.run(
                 ["git", "rev-parse", "--show-toplevel"],
                 cwd=file_dir,
@@ -249,17 +257,23 @@ class RuffNormalizer:
                 check=True
             )
             git_root = Path(result.stdout.strip())
+            print(f"[DEBUG] Git root: {git_root}", file=sys.stderr)
             
             # Make relative to git root
             try:
                 rel_path = path_obj.resolve().relative_to(git_root)
+                print(f"[DEBUG] Normalized to: {rel_path}", file=sys.stderr)
                 return str(rel_path)
             except ValueError:
                 # Path not under git root, strip leading slash
-                return str(path_obj).lstrip('/')
-        except (subprocess.CalledProcessError, FileNotFoundError):
+                result = str(path_obj).lstrip('/')
+                print(f"[DEBUG] Path outside git root, stripped slash: {result}", file=sys.stderr)
+                return result
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
             # Not in git repo or git not available, strip leading slash
-            return str(path_obj).lstrip('/')
+            result = str(path_obj).lstrip('/')
+            print(f"[DEBUG] Git command failed ({e}), stripped slash: {result}", file=sys.stderr)
+            return result
 
     def normalize(self, ruff_output: Union[str, Dict, List]) -> NormalizedFindings:
         """Normalize Ruff JSON output."""
