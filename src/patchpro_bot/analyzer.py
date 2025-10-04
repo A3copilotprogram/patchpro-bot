@@ -221,6 +221,46 @@ class RuffNormalizer:
         "RUF": Category.STYLE.value,  # Ruff-specific rules
     }
 
+    def _normalize_file_path(self, file_path: str) -> str:
+        """Normalize file path to be relative to git root.
+        
+        Args:
+            file_path: Absolute or relative file path
+            
+        Returns:
+            Path relative to git root
+        """
+        import subprocess
+        
+        # If already relative, return as-is
+        path_obj = Path(file_path)
+        if not path_obj.is_absolute():
+            return file_path
+        
+        # Find git root
+        try:
+            # Try from the file's directory
+            file_dir = path_obj.parent if path_obj.is_file() else path_obj
+            result = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=file_dir,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            git_root = Path(result.stdout.strip())
+            
+            # Make relative to git root
+            try:
+                rel_path = path_obj.resolve().relative_to(git_root)
+                return str(rel_path)
+            except ValueError:
+                # Path not under git root, strip leading slash
+                return str(path_obj).lstrip('/')
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            # Not in git repo or git not available, strip leading slash
+            return str(path_obj).lstrip('/')
+
     def normalize(self, ruff_output: Union[str, Dict, List]) -> NormalizedFindings:
         """Normalize Ruff JSON output."""
         if isinstance(ruff_output, str):
@@ -256,9 +296,9 @@ class RuffNormalizer:
             severity = self.SEVERITY_MAP.get(rule_prefix, Severity.WARNING.value)
             category = self.CATEGORY_MAP.get(rule_prefix, Category.CORRECTNESS.value)
 
-            # Create location
+            # Create location with normalized file path
             location = Location(
-                file=ruff_finding["filename"],
+                file=self._normalize_file_path(ruff_finding["filename"]),
                 line=ruff_finding["location"]["row"],
                 column=ruff_finding["location"]["column"],
                 end_line=ruff_finding["end_location"]["row"] if ruff_finding.get("end_location") else None,
@@ -332,6 +372,46 @@ class SemgrepNormalizer:
         "LOW": Severity.INFO.value,
     }
 
+    def _normalize_file_path(self, file_path: str) -> str:
+        """Normalize file path to be relative to git root.
+        
+        Args:
+            file_path: Absolute or relative file path
+            
+        Returns:
+            Path relative to git root
+        """
+        import subprocess
+        
+        # If already relative, return as-is
+        path_obj = Path(file_path)
+        if not path_obj.is_absolute():
+            return file_path
+        
+        # Find git root
+        try:
+            # Try from the file's directory
+            file_dir = path_obj.parent if path_obj.is_file() else path_obj
+            result = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=file_dir,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            git_root = Path(result.stdout.strip())
+            
+            # Make relative to git root
+            try:
+                rel_path = path_obj.resolve().relative_to(git_root)
+                return str(rel_path)
+            except ValueError:
+                # Path not under git root, strip leading slash
+                return str(path_obj).lstrip('/')
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            # Not in git repo or git not available, strip leading slash
+            return str(path_obj).lstrip('/')
+
     def normalize(self, semgrep_output: Union[str, Dict]) -> NormalizedFindings:
         """Normalize Semgrep JSON output."""
         if isinstance(semgrep_output, str):
@@ -370,12 +450,12 @@ class SemgrepNormalizer:
             # Determine category based on rule ID patterns
             category = self._determine_category(check_id)
 
-            # Create location
+            # Create location with normalized file path
             start_pos = semgrep_finding.get("start", {})
             end_pos = semgrep_finding.get("end", {})
             
             location = Location(
-                file=semgrep_finding.get("path", ""),
+                file=self._normalize_file_path(semgrep_finding.get("path", "")),
                 line=start_pos.get("line", 1),
                 column=start_pos.get("col", 1),
                 end_line=end_pos.get("line"),
