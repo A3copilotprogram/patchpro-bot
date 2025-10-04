@@ -1461,6 +1461,11 @@ def pre_push_prompt(
     
     console.print()
     
+    # Force flush to ensure prompt appears immediately
+    import sys
+    sys.stdout.flush()
+    sys.stderr.flush()
+    
     choice = Prompt.ask(
         "Action",
         choices=["fix", "push", "cancel"],
