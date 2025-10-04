@@ -13,9 +13,6 @@ ENV/
 env.bak/
 venv.bak/
 
-# PatchPro artifacts
-artifact/
-
 # Build and distribution
 build/
 develop-eggs/
@@ -81,4 +78,7 @@ dmypy.json
 .pyre/
 .pytype/
 
-# PatchPro artifacts\n.patchpro/\n*.patch\n
+# PatchPro artifacts
+.patchpro/
+*.patch
+artifact/

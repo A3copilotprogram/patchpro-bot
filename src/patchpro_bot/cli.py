@@ -808,6 +808,25 @@ verbose = false
     
     # Install git hooks
     if with_hooks:
+        # Detect the current Python executable
+        python_executable = sys.executable
+        
+        # Verify patchpro-bot is installed in this Python
+        try:
+            result = subprocess.run(
+                [python_executable, "-c", "import patchpro_bot; print(patchpro_bot.__version__)"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            version = result.stdout.strip()
+            console.print(f"[dim]Using Python: {python_executable}[/dim]")
+            console.print(f"[dim]patchpro-bot version: {version}[/dim]")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            console.print(f"[red]❌ Error: patchpro-bot not found in {python_executable}[/red]")
+            console.print(f"[yellow]Please install patchpro-bot in the current Python environment first[/yellow]")
+            return
+        
         # Use Git to find the common directory where hooks live
         # This handles regular repos, worktrees, submodules, bare repos, etc.
         try:
@@ -831,7 +850,7 @@ verbose = false
             
             # Post-commit hook (triggers background analysis after commit)
             post_commit_hook = hooks_dir / "post-commit"
-            post_commit_content = '''#!/bin/bash
+            post_commit_content = f'''#!/bin/bash
 # PatchPro post-commit hook
 # Triggers background analysis after commit (non-blocking)
 
@@ -840,7 +859,8 @@ CHANGED_PY=$(git diff-tree --no-commit-id --name-only -r HEAD | grep '\\.py$')
 
 if [ -n "$CHANGED_PY" ]; then
     # Start background analysis (non-blocking)
-    nohup python -m patchpro_bot.cli analyze-staged --async --with-llm --last-commit > /dev/null 2>&1 &
+    # Using specific Python: {python_executable}
+    nohup {python_executable} -m patchpro_bot.cli analyze-commit --async --with-llm > /dev/null 2>&1 &
     echo "🤖 PatchPro analyzing your commit in the background..."
 fi
 '''
@@ -852,7 +872,7 @@ fi
             
             # Pre-push hook (shows findings from background analysis)
             pre_push_hook = hooks_dir / "pre-push"
-            pre_push_content = '''#!/bin/bash
+            pre_push_content = f'''#!/bin/bash
 # PatchPro pre-push hook
 # Shows findings from background analysis and prompts for action
 
@@ -861,7 +881,8 @@ fi
 exec < /dev/tty
 
 # Run interactive prompt
-python -m patchpro_bot.cli pre-push-prompt
+# Using specific Python: {python_executable}
+{python_executable} -m patchpro_bot.cli pre-push-prompt
 
 # Check exit code
 if [ $? -ne 0 ]; then
@@ -978,37 +999,29 @@ def status(
 
 
 @app.command()
-def analyze_staged(
+def analyze_commit(
     async_mode: bool = typer.Option(False, "--async", help="Run analysis in background"),
     with_llm: bool = typer.Option(False, "--with-llm", help="Include LLM patch generation"),
-    last_commit: bool = typer.Option(False, "--last-commit", help="Analyze files from last commit instead of staged"),
+    commit: str = typer.Option("HEAD", "--commit", "-c", help="Commit to analyze (default: HEAD)"),
     artifacts_dir: str = typer.Option(".patchpro", "--artifacts", "-a", help="Artifacts directory"),
 ) -> None:
-    """Analyze staged files or last commit."""
+    """Analyze files changed in a commit (used by post-commit hook)."""
     import subprocess
     from datetime import datetime
     
     artifacts_path = Path(artifacts_dir)
     artifacts_path.mkdir(parents=True, exist_ok=True)
     
-    # Get Python files to analyze
+    # Get Python files from commit
     try:
-        if last_commit:
-            # Get files from last commit
-            result = subprocess.run(
-                ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
-                capture_output=True, text=True, check=True
-            )
-        else:
-            # Get staged files
-            result = subprocess.run(
-                ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
-                capture_output=True, text=True, check=True
-            )
+        result = subprocess.run(
+            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit],
+            capture_output=True, text=True, check=True
+        )
         
         files = [f for f in result.stdout.strip().split('\n') if f and f.endswith('.py')]
     except subprocess.CalledProcessError:
-        console.print("[red]❌ Failed to get files[/red]")
+        console.print("[red]❌ Failed to get files from commit[/red]")
         return
     
     if not files:
@@ -1024,43 +1037,53 @@ def analyze_staged(
         # Run in background
         import multiprocessing
         process = multiprocessing.Process(
-            target=_run_staged_analysis,
+            target=_run_commit_analysis,
             args=(files, artifacts_path, with_llm)
         )
         process.start()
         console.print(f"[dim]🤖 PatchPro analyzing {len(files)} file(s) in background...[/dim]")
     else:
         # Run synchronously
-        _run_staged_analysis(files, artifacts_path, with_llm)
+        _run_commit_analysis(files, artifacts_path, with_llm)
 
 
-def _run_staged_analysis(staged_files: List[str], artifacts_path: Path, with_llm: bool = False):
-    """Run analysis on staged files (internal function)."""
+def _run_analysis_pipeline(
+    files: List[str], 
+    artifacts_path: Path, 
+    with_llm: bool = False,
+    tools: List[str] = ["ruff", "semgrep"],
+    context: str = "commit"
+) -> dict:
+    """Core analysis pipeline - reusable for commits, PRs, etc.
+    
+    Args:
+        files: List of files to analyze
+        artifacts_path: Path to store artifacts
+        with_llm: Whether to generate patches with LLM
+        tools: List of tools to run
+        context: Context string (commit, pr, manual) for logging
+        
+    Returns:
+        Status dictionary with analysis results
+    """
     from datetime import datetime
     
-    # Write running status
-    _write_status(artifacts_path, {
-        "status": "running",
-        "files": staged_files,
-        "started_at": datetime.now().isoformat()
-    })
-    
     try:
-        # Run analysis
+        # Run static analysis tools
         analyzer = FindingsAnalyzer()
         tool_outputs = {}
         
-        # Run ruff
-        ruff_output = _run_ruff(staged_files, None, artifacts_path)
-        if ruff_output:
-            tool_outputs["ruff"] = ruff_output
+        if "ruff" in tools:
+            ruff_output = _run_ruff(files, None, artifacts_path)
+            if ruff_output:
+                tool_outputs["ruff"] = ruff_output
         
-        # Run semgrep
-        semgrep_output = _run_semgrep(staged_files, None, artifacts_path)
-        if semgrep_output:
-            tool_outputs["semgrep"] = semgrep_output
+        if "semgrep" in tools:
+            semgrep_output = _run_semgrep(files, None, artifacts_path)
+            if semgrep_output:
+                tool_outputs["semgrep"] = semgrep_output
         
-        # Normalize findings
+        # Normalize and merge findings
         if tool_outputs:
             normalized_results = analyzer.normalize_findings(tool_outputs)
             merged_findings = analyzer.merge_findings(normalized_results)
@@ -1088,35 +1111,60 @@ def _run_staged_analysis(staged_files: List[str], artifacts_path: Path, with_llm
                 except Exception as e:
                     console.print(f"[yellow]⚠️  LLM patch generation failed: {e}[/yellow]")
             
-            # Write completed status
-            _write_status(artifacts_path, {
+            return {
                 "status": "completed",
                 "findings_count": len(merged_findings.findings),
                 "critical_count": critical_count,
                 "warning_count": warning_count,
                 "patches_available": patches_available,
-                "files_analyzed": staged_files,
+                "files_analyzed": files,
+                "context": context,
                 "completed_at": datetime.now().isoformat()
-            })
+            }
         else:
-            # No findings
-            _write_status(artifacts_path, {
+            # No tool outputs
+            return {
                 "status": "completed",
                 "findings_count": 0,
                 "critical_count": 0,
                 "warning_count": 0,
                 "patches_available": False,
-                "files_analyzed": staged_files,
+                "files_analyzed": files,
+                "context": context,
                 "completed_at": datetime.now().isoformat()
-            })
+            }
     
     except Exception as e:
-        # Write error status
-        _write_status(artifacts_path, {
+        return {
             "status": "error",
             "error": str(e),
+            "context": context,
             "timestamp": datetime.now().isoformat()
-        })
+        }
+
+
+def _run_commit_analysis(commit_files: List[str], artifacts_path: Path, with_llm: bool = False):
+    """Run analysis on committed files (internal function for post-commit hook)."""
+    from datetime import datetime
+    
+    # Write running status
+    _write_status(artifacts_path, {
+        "status": "running",
+        "files": commit_files,
+        "context": "commit",
+        "started_at": datetime.now().isoformat()
+    })
+    
+    # Run the common analysis pipeline
+    status = _run_analysis_pipeline(
+        files=commit_files,
+        artifacts_path=artifacts_path,
+        with_llm=with_llm,
+        context="commit"
+    )
+    
+    # Write status
+    _write_status(artifacts_path, status)
 
 
 def _write_status(artifacts_path: Path, status_data: dict):
@@ -1195,6 +1243,142 @@ def _parse_finding(f: dict) -> Finding:
 
 
 @app.command()
+def analyze_pr(
+    base: str = typer.Option("origin/main", "--base", "-b", help="Base branch to compare against"),
+    head: str = typer.Option("HEAD", "--head", "-h", help="Head commit to analyze"),
+    with_llm: bool = typer.Option(True, "--with-llm/--no-llm", help="Include LLM patch generation"),
+    artifacts_dir: str = typer.Option(".patchpro", "--artifacts", "-a", help="Artifacts directory"),
+    tools: List[str] = typer.Option(["ruff", "semgrep"], "--tools", "-t", help="Tools to run"),
+    exit_code: bool = typer.Option(True, "--exit-code/--no-exit-code", help="Exit with non-zero if issues found"),
+) -> None:
+    """Analyze files changed in PR (for CI/CD pipelines).
+    
+    This command is designed for CI/CD pipelines to analyze only the files
+    changed in a pull request, generate patches, and optionally fail the build
+    if critical issues are found.
+    
+    Examples:
+        # In GitHub Actions
+        patchpro analyze-pr --base origin/main --head HEAD
+        
+        # In GitLab CI comparing merge request
+        patchpro analyze-pr --base origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+        
+        # Don't fail build on findings (report only)
+        patchpro analyze-pr --no-exit-code
+    """
+    import subprocess
+    from datetime import datetime
+    
+    artifacts_path = Path(artifacts_dir)
+    artifacts_path.mkdir(parents=True, exist_ok=True)
+    
+    console.print(f"[bold blue]🔍 Analyzing PR changes ({base}...{head})[/bold blue]")
+    
+    # Get Python files changed in PR
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", f"{base}...{head}"],
+            capture_output=True, text=True, check=True
+        )
+        
+        files = [f for f in result.stdout.strip().split('\n') if f and f.endswith('.py')]
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]❌ Failed to get changed files: {e}[/red]")
+        if exit_code:
+            raise typer.Exit(1)
+        return
+    
+    if not files:
+        console.print("[green]✅ No Python files changed in PR[/green]")
+        _write_status(artifacts_path, {
+            "status": "idle",
+            "message": "No Python files to analyze",
+            "context": "pr",
+            "timestamp": datetime.now().isoformat()
+        })
+        sys.exit(0)
+    
+    console.print(f"[cyan]Analyzing {len(files)} changed file(s)...[/cyan]")
+    for file in files:
+        console.print(f"  • {file}")
+    
+    # Write running status
+    _write_status(artifacts_path, {
+        "status": "running",
+        "files": files,
+        "context": "pr",
+        "base": base,
+        "head": head,
+        "started_at": datetime.now().isoformat()
+    })
+    
+    # Run the common analysis pipeline
+    status = _run_analysis_pipeline(
+        files=files,
+        artifacts_path=artifacts_path,
+        with_llm=with_llm,
+        tools=tools,
+        context="pr"
+    )
+    
+    # Write status
+    _write_status(artifacts_path, status)
+    
+    # Display results
+    findings_count = status.get("findings_count", 0)
+    critical_count = status.get("critical_count", 0)
+    
+    if findings_count == 0:
+        console.print("\n[bold green]✅ No issues found in PR changes![/bold green]")
+        sys.exit(0)
+    
+    # Show findings
+    console.print(f"\n[yellow]⚠️  Found {findings_count} issue(s) in PR changes[/yellow]")
+    if critical_count > 0:
+        console.print(f"   🔴 {critical_count} critical issue(s)")
+    if status.get("patches_available"):
+        console.print(f"   🔧 Patches available in {artifacts_dir}/")
+    
+    # Show findings table
+    findings_file = artifacts_path / "findings.json"
+    if findings_file.exists():
+        findings_data = json.loads(findings_file.read_text())
+        findings_list = [_parse_finding(f) for f in findings_data['findings']]
+        
+        if 'metadata' in findings_data:
+            metadata = Metadata(
+                tool=findings_data['metadata'].get('tool', 'unknown'),
+                version=findings_data['metadata'].get('version', 'unknown'),
+                total_findings=findings_data['metadata'].get('total_findings', len(findings_list))
+            )
+        else:
+            metadata = Metadata(tool='merged', version='1.0', total_findings=len(findings_list))
+        
+        findings = NormalizedFindings(findings=findings_list, metadata=metadata)
+        _display_findings_table(findings)
+    
+    console.print()
+    
+    # Show patch locations
+    patches = list(artifacts_path.glob("patch_*.diff"))
+    if patches:
+        console.print("[bold]Generated patches:[/bold]")
+        for patch in patches:
+            console.print(f"  📄 {patch}")
+    
+    # Exit with appropriate code
+    if exit_code and critical_count > 0:
+        console.print("\n[red]❌ Critical issues found - failing build[/red]")
+        sys.exit(1)
+    elif exit_code and findings_count > 0:
+        console.print("\n[yellow]⚠️  Non-critical issues found[/yellow]")
+        sys.exit(0)
+    else:
+        sys.exit(0)
+
+
+@app.command()
 def check_status(
     artifacts_dir: str = typer.Option(".patchpro", "--artifacts", "-a", help="Artifacts directory"),
 ) -> None:
@@ -1268,7 +1452,7 @@ def pre_push_check(
         console.print(f"   Analyzing {len(files)} Python file(s)...")
         
         # Run analysis synchronously
-        _run_staged_analysis(files, artifacts_path, with_llm=True)
+        _run_commit_analysis(files, artifacts_path, with_llm=True)
         
         # Read status
         status = _read_status(artifacts_path)

@@ -165,22 +165,44 @@ class DiffGenerator:
             diff_patch: DiffPatch containing diff content
             
         Returns:
-            Unified diff string
+            Unified diff string with normalized relative paths
         """
         # The diff content should already be in unified diff format
         diff_content = diff_patch.diff_content
         
+        # Get relative path from git root (ALWAYS normalize paths!)
+        file_path = diff_patch.file_path
+        relative_path = self._make_relative_path(file_path)
+        
         # Validate and potentially clean up the diff
         if not diff_content.startswith('diff --git'):
             # Add proper diff header if missing
-            file_path = diff_patch.file_path
-            # Convert to relative path from git root
-            relative_path = self._make_relative_path(file_path)
             diff_content = f"""diff --git a/{relative_path} b/{relative_path}
 index 0000000..1111111 100644
 --- a/{relative_path}
 +++ b/{relative_path}
 {diff_content}"""
+        else:
+            # Header exists but may have absolute paths - normalize them!
+            # Parse and replace the header lines
+            lines = diff_content.split('\n')
+            fixed_lines = []
+            
+            for line in lines:
+                if line.startswith('diff --git '):
+                    # Replace entire header line with normalized paths
+                    fixed_lines.append(f'diff --git a/{relative_path} b/{relative_path}')
+                elif line.startswith('--- '):
+                    # Normalize --- line
+                    fixed_lines.append(f'--- a/{relative_path}')
+                elif line.startswith('+++ '):
+                    # Normalize +++ line
+                    fixed_lines.append(f'+++ b/{relative_path}')
+                else:
+                    # Keep other lines unchanged
+                    fixed_lines.append(line)
+            
+            diff_content = '\n'.join(fixed_lines)
         
         return diff_content
     
