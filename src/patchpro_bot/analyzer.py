@@ -257,6 +257,9 @@ class RuffNormalizer:
         try:
             # Try from the file's directory
             file_dir = path_obj.parent if path_obj.is_file() else path_obj
+            with open("/tmp/patchpro_debug.log", "a") as f:
+                f.write(f"[RuffNormalizer-{os.getpid()}] file_dir for git command: {file_dir}\n")
+            
             result = subprocess.run(
                 ["git", "rev-parse", "--show-toplevel"],
                 cwd=file_dir,
@@ -264,7 +267,13 @@ class RuffNormalizer:
                 text=True,
                 check=True
             )
-            git_root = Path(result.stdout.strip())
+            git_root_str = result.stdout.strip()
+            git_root = Path(git_root_str)
+            
+            with open("/tmp/patchpro_debug.log", "a") as f:
+                f.write(f"[RuffNormalizer-{os.getpid()}] git stdout: '{result.stdout}'\n")
+                f.write(f"[RuffNormalizer-{os.getpid()}] git stdout stripped: '{git_root_str}'\n")
+                f.write(f"[RuffNormalizer-{os.getpid()}] git root Path object: '{git_root}'\n")
             
             # Make relative to git root
             try:
