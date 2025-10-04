@@ -856,6 +856,10 @@ fi
 # PatchPro pre-push hook
 # Shows findings from background analysis and prompts for action
 
+# Redirect stdin from terminal for interactive prompt
+# This is required because git hooks don't have stdin connected by default
+exec < /dev/tty
+
 # Run interactive prompt
 python -m patchpro_bot.cli pre-push-prompt
 
