@@ -1,5 +1,8 @@
 """
 Analyzer module for normalizing static analysis findings from Ruff, Semgrep and other tools.
+
+This module provides normalization of findings from multiple static analysis tools
+into a unified schema, with proper path normalization relative to git root.
 """
 import json
 import hashlib
