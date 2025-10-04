@@ -1463,6 +1463,7 @@ def pre_push_prompt(
     
     # Force flush to ensure prompt appears immediately
     import sys
+    console.file.flush()  # Flush rich console
     sys.stdout.flush()
     sys.stderr.flush()
     
