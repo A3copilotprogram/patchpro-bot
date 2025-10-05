@@ -197,7 +197,9 @@ class AgenticPatchGeneratorV2(AgenticCore):
             if not tool:
                 return {'success': False, 'error': f'Unknown strategy: {strategy}'}
             
-            result = await tool.function(**context)
+            # Pass context as explicit parameter instead of unpacking
+            # This allows feedback to flow through the retry loop
+            result = await tool.function(context=context)
             
             # Record attempt in memory
             self.memory.record_attempt(
@@ -210,28 +212,44 @@ class AgenticPatchGeneratorV2(AgenticCore):
                 logger.info(f"✓ Strategy {strategy} succeeded on attempt {attempt}")
                 return result
             
-            # Failed - analyze and try alternative
-            logger.warning(f"✗ Strategy {strategy} failed: {result.get('error')}")
+            # Failed - analyze and provide feedback for next attempt
+            error_msg = result.get('error', 'Unknown error')
+            validation_feedback = result.get('validation_feedback', [])
+            
+            logger.warning(f"✗ Strategy {strategy} failed: {error_msg}")
             
             if attempt < self.max_retries:
-                # Try alternative strategy
-                if strategy == "generate_batch_patch":
+                # Add validation feedback to context for next attempt
+                if validation_feedback:
+                    context['previous_errors'] = validation_feedback
+                    context['attempt_number'] = attempt + 1
+                    logger.info(f"Retry {attempt + 1} with feedback: {validation_feedback[:100]}")
+                
+                # Try alternative strategy on first failure
+                if attempt == 1 and strategy == "generate_batch_patch":
                     # Batch failed, try individual
                     strategy = "generate_single_patch"
                     # Convert batch context to single
                     if 'findings' in context and context['findings']:
                         context = {'finding': context['findings'][0]}
-                        logger.info("Switching to single-patch strategy")
+                        if validation_feedback:
+                            context['previous_errors'] = validation_feedback
+                        logger.info("Switching to single-patch strategy with error feedback")
         
         return {'success': False, 'error': 'Exhausted all retries'}
     
-    async def _generate_single_patch(self, finding: AnalysisFinding) -> Dict[str, Any]:
+    async def _generate_single_patch(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Generate patch for single finding using PROVEN Issue #13 approach.
         
         This is the 100% success rate strategy.
         """
         try:
+            # Extract finding from context
+            finding = context.get('finding')
+            if not finding:
+                return {'success': False, 'error': 'Missing finding in context'}
+            
             # Group into file_fixes format that PromptBuilder expects
             file_fixes = {finding.location.file: [finding]}
             
@@ -241,12 +259,29 @@ class AgenticPatchGeneratorV2(AgenticCore):
                 repo_path=str(self.repo_path)
             )
             
+            # Add previous error feedback to prompt if available (agentic self-correction)
+            if 'previous_errors' in context:
+                attempt = context.get('attempt_number', 2)
+                error_text = '\n'.join(f"  - {err}" for err in context['previous_errors'])
+                feedback_prompt = f"""
+IMPORTANT: Previous attempt #{attempt-1} failed validation with these errors:
+{error_text}
+
+Please carefully address these issues in your patch. Common problems:
+- Empty additions ('+' with no content) - always include the actual code
+- Wrong line numbers - account for previous changes in multi-hunk patches
+- Missing context - include enough surrounding lines (typically 3)
+- Corrupted hunks - ensure proper unified diff format with @@ headers
+
+Generate a corrected patch that will pass git apply validation.
+"""
+                prompt = feedback_prompt + "\n\n" + prompt
+            
             # Call LLM
-            response = await self.llm_client.generate_async(
-                messages=[
-                    {"role": "system", "content": self.prompt_builder.system_prompt},
-                    {"role": "user", "content": prompt}
-                ]
+            response = await self.llm_client.generate_response(
+                prompt=prompt,
+                system_prompt=self.prompt_builder.system_prompt,
+                use_json_mode=False
             )
             
             # Parse with PROVEN parser from Issue #13
@@ -258,17 +293,41 @@ class AgenticPatchGeneratorV2(AgenticCore):
             if not parsed.diff_patches:
                 return {'success': False, 'error': 'No patches parsed from LLM response'}
             
-            # Validate patches
+            # Validate patches with git apply and collect feedback
             valid_patches = []
+            validation_feedback = []
+            
             for patch in parsed.diff_patches:
-                is_valid, errors = self.validator.validate_format(patch.diff_content)
-                if is_valid:
+                # First check format
+                is_valid_format, format_errors = self.validator.validate_format(patch.diff_content)
+                if not is_valid_format:
+                    feedback = f"Format errors in {patch.file_path}: {', '.join(format_errors)}"
+                    validation_feedback.append(feedback)
+                    logger.warning(feedback)
+                    continue
+                
+                # Then check if git can apply it (the real test)
+                can_apply, apply_error = self.validator.can_apply(
+                    patch.diff_content,
+                    str(self.repo_path)
+                )
+                
+                if can_apply:
                     valid_patches.append(patch)
+                    logger.info(f"✓ Patch for {patch.file_path} validated successfully")
                 else:
-                    logger.warning(f"Invalid patch for {patch.file_path}: {errors}")
+                    feedback = f"Git apply failed for {patch.file_path}: {apply_error.strip()}"
+                    validation_feedback.append(feedback)
+                    logger.warning(feedback)
             
             if not valid_patches:
-                return {'success': False, 'error': 'No valid patches generated'}
+                # Return detailed feedback for agent to use in retry
+                error_detail = '; '.join(validation_feedback) if validation_feedback else 'All patches failed validation'
+                return {
+                    'success': False,
+                    'error': f'No patches passed git apply validation. {error_detail}',
+                    'validation_feedback': validation_feedback
+                }
             
             return {'success': True, 'result': {'patches': valid_patches}}
             
@@ -276,9 +335,14 @@ class AgenticPatchGeneratorV2(AgenticCore):
             logger.error(f"Single patch generation failed: {e}", exc_info=True)
             return {'success': False, 'error': str(e)}
     
-    async def _generate_batch_patch(self, findings: List[AnalysisFinding]) -> Dict[str, Any]:
+    async def _generate_batch_patch(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Generate unified patch for multiple findings in same file."""
         try:
+            # Extract findings from context
+            findings = context.get('findings', [])
+            if not findings:
+                return {'success': False, 'error': 'Missing findings in context'}
+            
             # Group by file (should all be same file, but be safe)
             file_fixes = {}
             for finding in findings:
@@ -293,12 +357,29 @@ class AgenticPatchGeneratorV2(AgenticCore):
                 repo_path=str(self.repo_path)
             )
             
+            # Add previous error feedback if available (agentic self-correction)
+            if 'previous_errors' in context:
+                attempt = context.get('attempt_number', 2)
+                error_text = '\n'.join(f"  - {err}" for err in context['previous_errors'])
+                feedback_prompt = f"""
+IMPORTANT: Previous attempt #{attempt-1} failed validation with these errors:
+{error_text}
+
+Please carefully address these issues in your batch patch. Common problems:
+- Empty additions ('+' with no content) - always include the actual code
+- Wrong line numbers - account for previous changes in multi-hunk patches
+- Missing context - include enough surrounding lines (typically 3)
+- Corrupted hunks - ensure proper unified diff format with @@ headers
+
+Generate a corrected unified diff patch that will pass git apply validation.
+"""
+                prompt = feedback_prompt + "\n\n" + prompt
+            
             # Call LLM
-            response = await self.llm_client.generate_async(
-                messages=[
-                    {"role": "system", "content": self.prompt_builder.system_prompt},
-                    {"role": "user", "content": prompt}
-                ]
+            response = await self.llm_client.generate_response(
+                prompt=prompt,
+                system_prompt=self.prompt_builder.system_prompt,
+                use_json_mode=False
             )
             
             # Parse
@@ -310,17 +391,41 @@ class AgenticPatchGeneratorV2(AgenticCore):
             if not parsed.diff_patches:
                 return {'success': False, 'error': 'No patches parsed from LLM response'}
             
-            # Validate
+            # Validate patches with git apply and collect feedback
             valid_patches = []
+            validation_feedback = []
+            
             for patch in parsed.diff_patches:
-                is_valid, errors = self.validator.validate_format(patch.diff_content)
-                if is_valid:
+                # First check format
+                is_valid_format, format_errors = self.validator.validate_format(patch.diff_content)
+                if not is_valid_format:
+                    feedback = f"Format errors in {patch.file_path}: {', '.join(format_errors)}"
+                    validation_feedback.append(feedback)
+                    logger.warning(feedback)
+                    continue
+                
+                # Then check if git can apply it (the real test)
+                can_apply, apply_error = self.validator.can_apply(
+                    patch.diff_content,
+                    str(self.repo_path)
+                )
+                
+                if can_apply:
                     valid_patches.append(patch)
+                    logger.info(f"✓ Batch patch for {patch.file_path} validated successfully")
                 else:
-                    logger.warning(f"Invalid batch patch: {errors}")
+                    feedback = f"Git apply failed for {patch.file_path}: {apply_error.strip()}"
+                    validation_feedback.append(feedback)
+                    logger.warning(feedback)
             
             if not valid_patches:
-                return {'success': False, 'error': 'No valid patches from batch generation'}
+                # Return detailed feedback for agent to use in retry
+                error_detail = '; '.join(validation_feedback) if validation_feedback else 'All patches failed validation'
+                return {
+                    'success': False,
+                    'error': f'No patches passed git apply validation. {error_detail}',
+                    'validation_feedback': validation_feedback
+                }
             
             return {'success': True, 'result': {'patches': valid_patches}}
             

@@ -277,6 +277,19 @@ Files to fix:
 """
         
         for file_path, findings in file_fixes.items():
+            # Normalize file_path: convert absolute to relative if needed
+            file_path_obj = Path(file_path)
+            repo_path_obj = Path(repo_path)
+            
+            # If file_path is absolute and starts with repo_path, make it relative
+            if file_path_obj.is_absolute():
+                try:
+                    relative_file_path = file_path_obj.relative_to(repo_path_obj)
+                    file_path = str(relative_file_path)
+                except ValueError:
+                    # file_path is not relative to repo_path, use as-is
+                    pass
+            
             prompt += f"\n## File: `{file_path}`\n\n**Issues found**:\n"
             
             for i, finding in enumerate(findings, 1):

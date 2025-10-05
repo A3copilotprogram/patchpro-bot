@@ -60,23 +60,25 @@ class LLMClient:
         self.async_client = AsyncOpenAI(**client_kwargs)
         logger.info(f"Initialized LLM client with model: {self.model}")
     
-    async def generate_suggestions(
+    async def generate_response(
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
         use_json_mode: bool = True,
         **kwargs
     ) -> LLMResponse:
-        """Generate code suggestions based on analysis findings.
+        """Generate a response from the LLM.
+        
+        Generic method for any LLM generation task: patches, suggestions, analysis, etc.
         
         Args:
-            prompt: User prompt with analysis findings
-            system_prompt: Optional system prompt for instructions
+            prompt: User prompt with context
+            system_prompt: Optional system instructions
             use_json_mode: Whether to use JSON mode for structured output
             **kwargs: Additional parameters for the API call
             
         Returns:
-            LLM response with suggestions
+            LLM response with generated content
         """
         messages = []
         
@@ -129,6 +131,34 @@ class LLMClient:
         except Exception as e:
             logger.error(f"Unexpected error calling LLM: {e}")
             raise
+    
+    async def generate_suggestions(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        use_json_mode: bool = True,
+        **kwargs
+    ) -> LLMResponse:
+        """DEPRECATED: Use generate_response() instead.
+        
+        This method is kept only for backward compatibility with existing code.
+        New code should use generate_response() which has clearer semantics.
+        
+        Args:
+            prompt: User prompt
+            system_prompt: Optional system instructions
+            use_json_mode: Whether to use JSON mode for structured output
+            **kwargs: Additional parameters for the API call
+            
+        Returns:
+            LLM response
+        """
+        return await self.generate_response(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            use_json_mode=use_json_mode,
+            **kwargs
+        )
     
     def _supports_json_mode(self) -> bool:
         """Check if the current model supports JSON mode.
