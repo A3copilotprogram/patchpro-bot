@@ -82,6 +82,11 @@ class AgentConfig:
     
     # NEW: Unified diff generation (Hour 1 golden approach)
     use_unified_diff_generation: bool = True  # Enable new approach by default
+    
+    # NEW: Agentic mode - enables autonomous behavior with self-correction
+    enable_agentic_mode: bool = False  # Disabled by default for backward compatibility
+    agentic_max_retries: int = 3  # Number of self-correction attempts
+    agentic_enable_planning: bool = True  # Enable multi-step planning
 
 
 @dataclass
@@ -612,6 +617,11 @@ class AgentCore:
             Tuple of (code_fixes, diff_patches)
         """
         findings = batch['findings']
+        
+        # NEW: Use AGENTIC MODE if enabled (autonomous with self-correction)
+        if self.config.enable_agentic_mode:
+            logger.info("🤖 Using AGENTIC MODE with self-correction and autonomous decision-making")
+            return await self._process_batch_agentic(batch)
         
         # NEW: Use unified diff generation if enabled
         if self.config.use_unified_diff_generation:
