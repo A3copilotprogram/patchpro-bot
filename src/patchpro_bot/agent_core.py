@@ -802,10 +802,18 @@ class AgentCore:
             for i, patch in enumerate(diff_patches, 1):
                 logger.info(f"Validating patch {i}/{len(diff_patches)}: {patch.file_path}")
                 
+                # CRITICAL: Normalize absolute paths to relative paths
+                normalized_diff = validator.normalize_diff_paths(patch.diff_content, repo_path)
+                
+                if normalized_diff != patch.diff_content:
+                    logger.info(f"✓ Normalized paths for patch {i}")
+                    # Update patch with normalized content
+                    patch.diff_content = normalized_diff
+                
                 # Validate format
                 is_valid, format_errors = validator.validate_format(patch.diff_content)
                 if not is_valid:
-                    logger.error(f"Patch {i} has invalid format: {format_errors}")
+                    logger.error(f"✗ Patch {i} has invalid format: {format_errors}")
                     continue
                 
                 # Validate applicability

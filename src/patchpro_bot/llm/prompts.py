@@ -340,7 +340,16 @@ UNIFIED DIFF FORMAT REQUIREMENTS:
 - Use - for removed lines, + for added lines
 - Space prefix for context lines
 
-CRITICAL: 
+CRITICAL PATH REQUIREMENTS:
+- Use RELATIVE paths from repository root (e.g., src/module/file.py)
+- NEVER use absolute paths (e.g., /opt/andela/genai/repo/src/module/file.py)
+- File paths in diff headers should match the file_path field
+- Example: if file_path is "src/app.py", use:
+  diff --git a/src/app.py b/src/app.py
+  --- a/src/app.py
+  +++ b/src/app.py
+
+CRITICAL CODE REQUIREMENTS:
 - Use the EXACT line numbers shown in the code context above
 - Match indentation and spacing exactly
 - Make minimal changes - only fix the reported issues

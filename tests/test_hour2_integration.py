@@ -167,6 +167,7 @@ async def test_integration_with_50_findings():
         artifact_dir=test_artifact_dir,
         use_unified_diff_generation=True,  # Enable new approach
         max_findings=50,
+        max_findings_per_batch=10,  # SMALLER batches for better LLM results
         max_tokens=4096,
         temperature=0.1,
         combine_patches=True,
