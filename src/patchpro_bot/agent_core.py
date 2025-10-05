@@ -734,13 +734,14 @@ class AgentCore:
             return None
     
     async def _process_batch_agentic(self, batch: Dict) -> Tuple[List, List]:
-        """Process batch using AGENTIC MODE with self-correction and autonomous behavior.
+        """Process batch using AGENTIC MODE V2 with self-correction and autonomous behavior.
         
         This method transforms PatchPro into a true agentic system with:
         - Autonomous decision-making (agent chooses strategy per finding)
         - Self-correction loops (retries on validation failure)
         - Learning from failures (adjusts approach based on errors)
-        - Dynamic tool selection (simple vs contextual patches)
+        - Dynamic tool selection (single vs batch patches)
+        - Built on PROVEN components from Issue #13
         
         Args:
             batch: Dictionary containing findings and metadata
@@ -748,13 +749,12 @@ class AgentCore:
         Returns:
             Tuple of (code_fixes, diff_patches) - only diff_patches populated
         """
-        from patchpro_bot.agentic_patch_generator import AgenticPatchGenerator
-        from patchpro_bot.models import Finding
+        from patchpro_bot.agentic_patch_generator_v2 import AgenticPatchGeneratorV2
         
         findings = batch['findings']
-        logger.info(f"🤖 Agentic agent processing {len(findings)} findings autonomously...")
+        logger.info(f"🤖 Agentic agent V2 processing {len(findings)} findings autonomously...")
         
-        # Initialize LLM client if neededfeature/S0-AG-03-llm-generates-diffs
+        # Initialize LLM client if needed
         if self.llm_client is None:
             try:
                 api_key = self.config.openai_api_key or os.getenv("OPENAI_API_KEY")
@@ -772,33 +772,29 @@ class AgentCore:
                 logger.error(f"Failed to initialize LLM client: {e}")
                 return [], []
         
-        # Create agentic patch generator
-        agent = AgenticPatchGenerator(
+        # Create agentic patch generator V2 (built on proven APIs)
+        agent = AgenticPatchGeneratorV2(
             llm_client=self.llm_client,
             repo_path=self.config.base_dir,
             max_retries=self.config.agentic_max_retries,
             enable_planning=self.config.agentic_enable_planning
         )
         
-        # Convert AnalysisFinding to Finding format for agent
-        agent_findings = []
-        for af in findings:
-            finding = Finding(
-                check_id=af.check_id,
-                location=af.location,
-                extra=af.extra
-            )
-            agent_findings.append(finding)
-        
+        # V2 already uses AnalysisFinding - no conversion needed!
         # Let agent autonomously generate patches with self-correction
-        result = await agent.generate_patches(agent_findings)
+        result = await agent.generate_patches(findings)
         
-        # Log agent performance
-        logger.info(f"🤖 Agent completed: {result['successes']}/{result['total']} success rate: {result['success_rate']:.1%}")
-        logger.info(f"🧠 Agent state: {result['agent_state']}")
+        # Log agent performance with telemetry
+        logger.info(f"🤖 Agent completed: {result['successes']}/{result['total_files']} files")
+        logger.info(f"📊 Success rate: {result['success_rate']:.1%}")
+        logger.info(f"🔁 Total attempts: {result['total_attempts']}")
+        logger.info(f"🧠 Memory: {result['memory']}")
         
-        # Convert agent patches to diff_patches format
-        diff_patches = result['patches']
+        # Convert agent patches to diff_patches format expected by pipeline
+        diff_patches = []
+        for patch in result['patches']:
+            # DiffPatch already has the right format
+            diff_patches.append(patch)
         
         return [], diff_patches
     
