@@ -16,6 +16,7 @@ from .analysis import AnalysisReader, FindingAggregator
 from .llm import LLMClient, PromptBuilder, ResponseParser, ResponseType
 from .diff import DiffGenerator, FileReader, PatchWriter
 from .models import AnalysisFinding
+from .validators import DiffValidator
 
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,9 @@ class AgentConfig:
     # Scalability settings - Progress tracking
     enable_progress_tracking: bool = True
     progress_update_interval: int = 10
+    
+    # NEW: Unified diff generation (Hour 1 golden approach)
+    use_unified_diff_generation: bool = True  # Enable new approach by default
 
 
 @dataclass
@@ -609,6 +613,14 @@ class AgentCore:
         """
         findings = batch['findings']
         
+        # NEW: Use unified diff generation if enabled
+        if self.config.use_unified_diff_generation:
+            logger.info("Using NEW unified diff generation approach")
+            return await self._generate_unified_diffs_for_batch(batch)
+        
+        # FALLBACK: Use original approach
+        logger.info("Using LEGACY code fix generation approach")
+        
         # Get unique file paths for this batch
         file_paths = list(set(f.location.file for f in findings))
         
@@ -710,6 +722,109 @@ class AgentCore:
         except Exception as e:
             logger.error(f"LLM generation failed for batch: {e}")
             return None
+    
+    async def _generate_unified_diffs_for_batch(self, batch: Dict) -> Tuple[List, List]:
+        """Generate unified diffs using new context-aware approach.
+        
+        This is the NEW golden approach that prevents LLM hallucination by:
+        1. Providing real code context with line numbers
+        2. Asking LLM to generate unified diffs directly
+        3. Validating diffs with git apply --check
+        
+        Args:
+            batch: Dictionary containing findings and metadata
+            
+        Returns:
+            Tuple of (code_fixes, diff_patches) - only diff_patches will be populated
+        """
+        findings = batch['findings']
+        
+        # Group findings by file
+        file_fixes = {}
+        for finding in findings:
+            file_path = finding.location.file
+            if file_path not in file_fixes:
+                file_fixes[file_path] = []
+            file_fixes[file_path].append(finding)
+        
+        logger.info(f"Generating unified diffs for {len(file_fixes)} files using new approach")
+        
+        # Initialize LLM client if needed
+        if self.llm_client is None:
+            try:
+                api_key = self.config.openai_api_key or os.getenv("OPENAI_API_KEY")
+                if not api_key:
+                    logger.error("OpenAI API key not provided")
+                    return [], []
+                
+                self.llm_client = LLMClient(
+                    api_key=api_key,
+                    model=self.config.llm_model,
+                    max_tokens=self.config.max_tokens,
+                    temperature=self.config.temperature,
+                )
+            except Exception as e:
+                logger.error(f"Failed to initialize LLM client: {e}")
+                return [], []
+        
+        # Build unified diff prompt with real file context
+        try:
+            repo_path = str(self.config.base_dir)
+            prompt = self.prompt_builder.build_unified_diff_prompt_with_context(
+                file_fixes,
+                repo_path
+            )
+            system_prompt = self.prompt_builder.get_system_prompt()
+            
+            logger.info(f"Sending unified diff request with {len(prompt)} chars")
+            
+            # Get LLM response
+            response = await self.llm_client.generate_suggestions(
+                prompt=prompt,
+                system_prompt=system_prompt,
+            )
+            
+            logger.info(f"Received LLM response: {len(response.content)} chars")
+            
+            # Parse unified diff patches
+            parsed_response = self.response_parser.parse_response(
+                response.content,
+                ResponseType.DIFF_PATCHES
+            )
+            
+            diff_patches = parsed_response.diff_patches
+            logger.info(f"Parsed {len(diff_patches)} diff patches")
+            
+            # Validate patches with git apply --check
+            validator = DiffValidator()
+            validated_patches = []
+            
+            for i, patch in enumerate(diff_patches, 1):
+                logger.info(f"Validating patch {i}/{len(diff_patches)}: {patch.file_path}")
+                
+                # Validate format
+                is_valid, format_errors = validator.validate_format(patch.diff_content)
+                if not is_valid:
+                    logger.error(f"Patch {i} has invalid format: {format_errors}")
+                    continue
+                
+                # Validate applicability
+                can_apply, apply_error = validator.can_apply(patch.diff_content, repo_path)
+                if can_apply:
+                    logger.info(f"✓ Patch {i} validated successfully")
+                    validated_patches.append(patch)
+                else:
+                    logger.warning(f"✗ Patch {i} cannot be applied: {apply_error}")
+            
+            logger.info(f"Validated {len(validated_patches)}/{len(diff_patches)} patches")
+            
+            return [], validated_patches
+            
+        except Exception as e:
+            logger.error(f"Failed to generate unified diffs: {e}")
+            import traceback
+            traceback.print_exc()
+            return [], []
     
     def _process_findings(self, findings: List[AnalysisFinding]) -> FindingAggregator:
         """Process and filter findings.
@@ -821,6 +936,12 @@ class AgentCore:
         
         logger.info(f"Parsed {len(parsed_response.code_fixes)} code fixes and {len(parsed_response.diff_patches)} diff patches")
         
+        # DEBUG: Log file paths from parsed response
+        for i, fix in enumerate(parsed_response.code_fixes):
+            logger.warning(f"DEBUG: Parsed CodeFix[{i}] file_path={fix.file_path}")
+        for i, patch in enumerate(parsed_response.diff_patches):
+            logger.warning(f"DEBUG: Parsed DiffPatch[{i}] file_path={patch.file_path}")
+        
         # Return in the expected format for backward compatibility
         return parsed_response.code_fixes, parsed_response.diff_patches
     
@@ -836,17 +957,30 @@ class AgentCore:
         """
         logger.info("Generating and writing patches")
         
+        # DEBUG: Log inputs before diff generation
+        for i, fix in enumerate(code_fixes):
+            logger.warning(f"DEBUG: CodeFix[{i}] input to diff_generator: file_path={fix.file_path}")
+        for i, patch in enumerate(diff_patches):
+            logger.warning(f"DEBUG: DiffPatch[{i}] input to diff_generator: file_path={patch.file_path}")
+        
         all_diffs = {}
         
         # Generate diffs from code fixes
         if code_fixes:
             code_fix_diffs = self.diff_generator.generate_multiple_diffs(code_fixes)
             all_diffs.update(code_fix_diffs)
+            # DEBUG: Log what came out of diff generation
+            for file_path, diff_content in code_fix_diffs.items():
+                header_line = diff_content.split('\n')[0] if diff_content else "NO CONTENT"
+                logger.warning(f"DEBUG: Generated diff for {file_path}, header={header_line}")
         
         # Process diff patches
         for diff_patch in diff_patches:
+            logger.warning(f"DEBUG: Processing DiffPatch file_path={diff_patch.file_path}")
             diff_content = self.diff_generator.generate_diff_from_patch(diff_patch)
             if diff_content:
+                header_line = diff_content.split('\n')[0] if diff_content else "NO CONTENT"
+                logger.warning(f"DEBUG: Generated diff from patch, header={header_line}")
                 all_diffs[diff_patch.file_path] = diff_content
         
         if not all_diffs:
