@@ -1100,11 +1100,24 @@ def _run_analysis_pipeline(
             patches_available = False
             if with_llm and len(merged_findings.findings) > 0:
                 try:
-                    config = AgentConfig(
+                    # Load PatchPro config to get agent settings
+                    from .config import PatchProConfig
+                    patchpro_config = PatchProConfig.load()
+                    
+                    # Create AgentCore config with settings from .patchpro.toml
+                    from .agent_core import AgentConfig as AgentCoreConfig
+                    config = AgentCoreConfig(
                         analysis_dir=artifacts_path,
                         artifact_dir=artifacts_path,
                         base_dir=Path.cwd(),
+                        enable_agentic_mode=patchpro_config.agent.enable_agentic_mode,
+                        agentic_max_retries=patchpro_config.agent.agentic_max_retries,
+                        agentic_enable_planning=patchpro_config.agent.agentic_enable_planning,
                     )
+                    
+                    # Log config for debugging
+                    console.print(f"[dim]🔧 Agentic mode: {config.enable_agentic_mode}[/dim]")
+                    
                     agent = AgentCore(config)
                     asyncio.run(agent.run())
                     patches_available = True

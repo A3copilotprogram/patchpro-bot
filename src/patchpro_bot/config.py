@@ -54,6 +54,15 @@ class AnalysisConfig:
 
 
 @dataclass
+class AgentConfig:
+    """Agent-specific configuration (agentic mode, telemetry)."""
+    enable_agentic_mode: bool = False
+    agentic_max_retries: int = 3
+    agentic_enable_planning: bool = True
+    enable_tracing: bool = True
+
+
+@dataclass
 class PatchProConfig:
     """Main PatchPro configuration."""
     analysis: AnalysisConfig = field(default_factory=AnalysisConfig)
@@ -61,6 +70,7 @@ class PatchProConfig:
     semgrep: SemgrepConfig = field(default_factory=SemgrepConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)
     
     @classmethod
     def load(cls, config_path: Optional[Path] = None) -> "PatchProConfig":
@@ -135,6 +145,15 @@ class PatchProConfig:
                     verbose=output_data.get("verbose", config.output.verbose),
                 )
             
+            if "agent" in data:
+                agent_data = data["agent"]
+                config.agent = AgentConfig(
+                    enable_agentic_mode=agent_data.get("enable_agentic_mode", config.agent.enable_agentic_mode),
+                    agentic_max_retries=agent_data.get("agentic_max_retries", config.agent.agentic_max_retries),
+                    agentic_enable_planning=agent_data.get("agentic_enable_planning", config.agent.agentic_enable_planning),
+                    enable_tracing=agent_data.get("enable_tracing", config.agent.enable_tracing),
+                )
+            
             return config
             
         except Exception as e:
@@ -174,6 +193,12 @@ class PatchProConfig:
                 "format": self.output.format,
                 "include_patches": self.output.include_patches,
                 "verbose": self.output.verbose,
+            },
+            "agent": {
+                "enable_agentic_mode": self.agent.enable_agentic_mode,
+                "agentic_max_retries": self.agent.agentic_max_retries,
+                "agentic_enable_planning": self.agent.agentic_enable_planning,
+                "enable_tracing": self.agent.enable_tracing,
             },
         }
         
