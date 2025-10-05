@@ -13,10 +13,10 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 
 from patchpro_bot.agentic_core import AgenticCore, Tool, AgentState
-from patchpro_bot.models import Finding, DiffPatch
+from patchpro_bot.models import AnalysisFinding
+from patchpro_bot.llm.response_parser import DiffPatch, ResponseParser
 from patchpro_bot.context_reader import FindingContextReader
-from patchpro_bot.llm.prompt_builder import UnifiedDiffPromptBuilder
-from patchpro_bot.llm.response_parser import parse_diff_patches
+from patchpro_bot.llm.prompts import PromptBuilder
 from patchpro_bot.validators import DiffValidator
 
 logger = logging.getLogger(__name__)
@@ -45,9 +45,10 @@ class AgenticPatchGenerator(AgenticCore):
         super().__init__(llm_client, max_retries, enable_planning)
         
         self.repo_path = repo_path
-        self.context_reader = FindingContextReader(repo_path)
-        self.prompt_builder = UnifiedDiffPromptBuilder()
-        self.validator = DiffValidator(repo_path)
+        self.context_reader = FindingContextReader()
+        self.prompt_builder = PromptBuilder()
+        self.response_parser = ResponseParser()
+        self.validator = DiffValidator()
         
         # Register specialized tools
         self._register_patch_tools()
@@ -97,7 +98,7 @@ class AgenticPatchGenerator(AgenticCore):
             required_args=['finding']
         ))
     
-    async def generate_patches(self, findings: List[Finding]) -> Dict[str, Any]:
+    async def generate_patches(self, findings: List[AnalysisFinding]) -> Dict[str, Any]:
         """
         Generate patches autonomously with self-correction.
         
@@ -225,7 +226,7 @@ class AgenticPatchGenerator(AgenticCore):
         logger.info("✓ Patch validated successfully")
         return {'valid': True}
     
-    def _analyze_finding_complexity(self, finding: Finding) -> Dict[str, Any]:
+    def _analyze_finding_complexity(self, finding: AnalysisFinding) -> Dict[str, Any]:
         """
         Analyze finding to determine complexity and optimal strategy.
         
@@ -237,11 +238,11 @@ class AgenticPatchGenerator(AgenticCore):
         recommended_tool = "generate_simple_patch"
         
         # Check message length
-        message_length = len(finding.extra.get('message', ''))
+        message_length = len(finding.message or '')
         
         # Check if multi-line change needed
-        start_line = finding.location.start_line
-        end_line = finding.location.end_line
+        start_line = finding.location.line
+        end_line = finding.location.end_line or finding.location.line
         lines_affected = end_line - start_line + 1
         
         if lines_affected > 5 or message_length > 200:
@@ -264,7 +265,7 @@ class AgenticPatchGenerator(AgenticCore):
             }
         }
     
-    async def _generate_simple_patch(self, finding: Finding) -> Dict[str, Any]:
+    async def _generate_simple_patch(self, finding: AnalysisFinding) -> Dict[str, Any]:
         """Generate patch with basic context (proven 100% success strategy)."""
         try:
             # Get minimal context
@@ -281,7 +282,7 @@ class AgenticPatchGenerator(AgenticCore):
             )
             
             # Parse response
-            patches = parse_diff_patches(response.content)
+            patches = self.response_parser.parse_diff_patches(response.content)
             
             if not patches:
                 return {'success': False, 'error': 'No patches parsed from response'}
@@ -298,7 +299,7 @@ class AgenticPatchGenerator(AgenticCore):
             logger.error(f"Simple patch generation failed: {e}")
             return {'success': False, 'error': str(e)}
     
-    async def _generate_contextual_patch(self, finding: Finding, context_lines: int) -> Dict[str, Any]:
+    async def _generate_contextual_patch(self, finding: AnalysisFinding, context_lines: int) -> Dict[str, Any]:
         """Generate patch with extended context."""
         try:
             # Get extended context
@@ -315,7 +316,7 @@ class AgenticPatchGenerator(AgenticCore):
             )
             
             # Parse response
-            patches = parse_diff_patches(response.content)
+            patches = self.response_parser.parse_diff_patches(response.content)
             
             if not patches:
                 return {'success': False, 'error': 'No patches parsed from response'}
@@ -331,7 +332,7 @@ class AgenticPatchGenerator(AgenticCore):
             logger.error(f"Contextual patch generation failed: {e}")
             return {'success': False, 'error': str(e)}
     
-    async def _generate_batch_patch(self, findings: List[Finding]) -> Dict[str, Any]:
+    async def _generate_batch_patch(self, findings: List[AnalysisFinding]) -> Dict[str, Any]:
         """Generate unified patch for multiple findings (experimental)."""
         # This is the multi-finding approach that currently has issues
         # Keeping it as a tool the agent can choose, but it will learn to avoid it
@@ -361,7 +362,7 @@ class AgenticPatchGenerator(AgenticCore):
             )
             
             # Parse response
-            patches = parse_diff_patches(response.content)
+            patches = self.response_parser.parse_diff_patches(response.content)
             
             if not patches:
                 return {'success': False, 'error': 'No patches parsed from batch response'}

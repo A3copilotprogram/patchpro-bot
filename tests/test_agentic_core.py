@@ -18,7 +18,7 @@ from typing import Dict, Any
 from patchpro_bot.agentic_core import (
     AgenticCore, Tool, ToolRegistry, AgentMemory, AgentPlan, AgentState
 )
-from patchpro_bot.models import Finding, Location
+from patchpro_bot.analyzer import Finding, Location
 
 
 class TestToolRegistry:
