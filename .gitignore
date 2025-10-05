@@ -1,5 +1,84 @@
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
 *.pyc
+
+# Virtual environments
 .venv/
-artifact/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Build and distribution
+build/
+develop-eggs/
 dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# IDEs
+.idea/
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+
+# Testing and coverage
+.coverage
+.coverage.*
+.cache
+.pytest_cache/
+htmlcov/
+.tox/
+.nox/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Environment
+.env
+.env.*
+
+# Logs
+*.log
+
+# Other
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# PatchPro artifacts
+.patchpro/
+*.patch
+artifact/

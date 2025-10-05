@@ -1,0 +1,1978 @@
+"""
+CLI interface for PatchPro with analyzer functionality and LLM integration.
+"""
+import asyncio
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import List, Optional
+
+import typer
+from rich.console import Console
+from rich.table import Table
+from rich.panel import Panel
+from rich import print as rprint
+
+from .analyzer import FindingsAnalyzer, NormalizedFindings, Finding, Metadata
+from .agent_core import AgentCore, AgentConfig
+
+app = typer.Typer(
+    name="patchpro",
+    help="PatchPro: CI code-repair assistant with LLM integration",
+    add_completion=False,
+)
+
+console = Console()
+
+
+def _detect_tool_from_file(findings_path: Path) -> str:
+    """Detect which tool generated the findings file."""
+    filename = findings_path.name.lower()
+    
+    # Try to detect from filename
+    if 'ruff' in filename:
+        return 'ruff'
+    elif 'semgrep' in filename:
+        return 'semgrep'
+    elif 'pylint' in filename:
+        return 'pylint'
+    elif 'mypy' in filename:
+        return 'mypy'
+    
+    # Try to detect from content
+    try:
+        with open(findings_path, 'r') as f:
+            content = f.read(500)  # Read first 500 chars
+            content_lower = content.lower()
+            
+            if '"check":' in content_lower or '"code":' in content_lower and '"message":' in content_lower:
+                return 'ruff'
+            elif '"check_id":' in content_lower or 'semgrep' in content_lower:
+                return 'semgrep'
+            elif 'pylint' in content_lower:
+                return 'pylint'
+            elif 'mypy' in content_lower:
+                return 'mypy'
+    except:
+        pass
+    
+    # Default to generic
+    return 'static-analysis'
+
+
+@app.command()
+def analyze(
+    paths: List[str] = typer.Argument(..., help="Files or directories to analyze"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Output file for normalized findings"),
+    format: str = typer.Option("json", "--format", "-f", help="Output format (json, table)"),
+    ruff_config: Optional[str] = typer.Option(None, "--ruff-config", help="Path to Ruff configuration file"),
+    semgrep_config: Optional[str] = typer.Option(None, "--semgrep-config", help="Path to Semgrep configuration file"),
+    tools: List[str] = typer.Option(["ruff", "semgrep"], "--tools", "-t", help="Tools to run (ruff, semgrep)"),
+    artifacts_dir: str = typer.Option("artifact/analysis", "--artifacts-dir", "-a", help="Directory to store raw analysis artifacts"),
+) -> None:
+    """Run static analysis and normalize findings."""
+    
+    console.print("[bold blue]🔍 Running PatchPro Analysis...[/bold blue]")
+    
+    # Create artifacts directory
+    artifacts_path = Path(artifacts_dir)
+    artifacts_path.mkdir(parents=True, exist_ok=True)
+    
+    # Run tools and collect outputs
+    tool_outputs = {}
+    
+    if "ruff" in tools:
+        console.print("Running Ruff analysis...")
+        ruff_output = _run_ruff(paths, ruff_config, artifacts_path)
+        if ruff_output:
+            tool_outputs["ruff"] = ruff_output
+    
+    if "semgrep" in tools:
+        console.print("Running Semgrep analysis...")
+        semgrep_output = _run_semgrep(paths, semgrep_config, artifacts_path)
+        if semgrep_output:
+            tool_outputs["semgrep"] = semgrep_output
+    
+    if not tool_outputs:
+        console.print("[yellow]⚠️  No analysis results found.[/yellow]")
+        return
+    
+    # Normalize findings
+    console.print("Normalizing findings...")
+    analyzer = FindingsAnalyzer()
+    normalized_results = analyzer.normalize_findings(tool_outputs)
+    
+    if len(normalized_results) > 1:
+        merged_findings = analyzer.merge_findings(normalized_results)
+    else:
+        merged_findings = normalized_results[0] if normalized_results else NormalizedFindings([], None)
+    
+    # Output results
+    if format == "json":
+        if output:
+            merged_findings.save(output)
+            console.print(f"[green]✅ Results saved to {output}[/green]")
+        else:
+            console.print(merged_findings.to_json())
+    elif format == "table":
+        _display_findings_table(merged_findings)
+    
+    # Summary
+    total_findings = len(merged_findings.findings)
+    console.print(f"\n[bold green]📊 Analysis Complete: {total_findings} finding(s)[/bold green]")
+
+
+@app.command()
+def normalize(
+    analysis_dir: str = typer.Argument(..., help="Directory containing analysis results"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Output file for normalized findings"),
+    format: str = typer.Option("json", "--format", "-f", help="Output format (json, table)"),
+) -> None:
+    """Normalize existing analysis results."""
+    
+    console.print(f"[bold blue]🔄 Normalizing findings from {analysis_dir}...[/bold blue]")
+    
+    analyzer = FindingsAnalyzer()
+    
+    try:
+        normalized_findings = analyzer.load_and_normalize(analysis_dir)
+        
+        if format == "json":
+            if output:
+                normalized_findings.save(output)
+                console.print(f"[green]✅ Results saved to {output}[/green]")
+            else:
+                console.print(normalized_findings.to_json())
+        elif format == "table":
+            _display_findings_table(normalized_findings)
+        
+        total_findings = len(normalized_findings.findings)
+        console.print(f"\n[bold green]📊 Normalization Complete: {total_findings} finding(s)[/bold green]")
+        
+    except Exception as e:
+        console.print(f"[red]❌ Error normalizing findings: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def run_ci(
+    artifacts_dir: str = typer.Option("artifact", "--artifacts", "-a", help="Artifacts directory"),
+    base_dir: Optional[str] = typer.Option(None, "--base-dir", help="Base directory for analysis"),
+    tools: List[str] = typer.Option(["ruff", "semgrep"], "--tools", "-t", help="Tools to run"),
+    ruff_config: Optional[str] = typer.Option(None, "--ruff-config", help="Path to Ruff configuration file"),
+    semgrep_config: Optional[str] = typer.Option(None, "--semgrep-config", help="Path to Semgrep configuration file"),
+    from_findings: List[str] = typer.Option(None, "--from-findings", "-f", help="Use existing findings files instead of running tools"),
+) -> None:
+    """Run complete CI pipeline with LLM integration.
+    
+    Supports two modes:
+    1. Run tools mode (default): Runs ruff/semgrep and generates patches
+    2. From findings mode: Uses existing tool outputs to generate patches
+    
+    Examples:
+        # Mode 1: Run everything
+        patchpro run-ci
+        
+        # Mode 2: Use existing findings
+        patchpro run-ci --from-findings ruff.json --from-findings semgrep.json
+    """
+    
+    console.print("[bold blue]🚀 Running PatchPro CI Pipeline...[/bold blue]")
+    
+    try:
+        # Setup paths
+        artifacts_path = Path(artifacts_dir)
+        artifacts_path.mkdir(parents=True, exist_ok=True)
+        
+        base_path = Path(base_dir) if base_dir else Path.cwd()
+        analysis_path = artifacts_path / "analysis"
+        analysis_path.mkdir(parents=True, exist_ok=True)
+        
+        # Determine mode: from-findings or run-tools
+        if from_findings:
+            # MODE 2: Use existing findings
+            console.print("[bold cyan]📂 Loading existing findings...[/bold cyan]")
+            
+            tool_outputs = {}
+            for findings_file in from_findings:
+                findings_path = Path(findings_file)
+                if not findings_path.exists():
+                    console.print(f"[red]❌ Findings file not found: {findings_file}[/red]")
+                    continue
+                
+                # Try to detect tool type from filename or content
+                tool_name = _detect_tool_from_file(findings_path)
+                console.print(f"Loading {tool_name} findings from {findings_file}")
+                
+                with open(findings_path, 'r') as f:
+                    tool_outputs[tool_name] = json.load(f)
+            
+            if not tool_outputs:
+                console.print("[red]❌ No valid findings files provided[/red]")
+                raise typer.Exit(1)
+            
+            console.print(f"[green]✅ Loaded findings from {len(tool_outputs)} tool(s)[/green]")
+        else:
+            # MODE 1: Run tools (original behavior)
+            console.print("[bold cyan]🔍 Running analysis and normalization...[/bold cyan]")
+            
+            # Run tools and collect outputs
+            tool_outputs = {}
+            
+            if "ruff" in tools:
+                console.print("Running Ruff analysis...")
+                ruff_output = _run_ruff([str(base_path)], ruff_config, analysis_path)
+                if ruff_output:
+                    tool_outputs["ruff"] = ruff_output
+            
+            if "semgrep" in tools:
+                console.print("Running Semgrep analysis...")
+                semgrep_output = _run_semgrep([str(base_path)], semgrep_config, analysis_path)
+                if semgrep_output:
+                    tool_outputs["semgrep"] = semgrep_output
+        
+        # Common path: Normalize findings (works for both modes)
+        console.print("Normalizing findings...")
+        analyzer = FindingsAnalyzer()
+        normalized_results = analyzer.normalize_findings(tool_outputs)
+        normalized_findings = analyzer.merge_findings(normalized_results)
+        
+        # Save normalized findings
+        normalized_findings.save(str(analysis_path / "normalized_findings.json"))
+        console.print(f"[green]✅ Analysis complete: {len(normalized_findings.findings)} findings[/green]")
+        
+        # Step 2: Run LLM pipeline
+        console.print("[bold cyan]🤖 Running LLM pipeline...[/bold cyan]")
+        config = AgentConfig(
+            analysis_dir=analysis_path,
+            artifact_dir=artifacts_path,
+            base_dir=base_path,
+        )
+        
+        agent = AgentCore(config)
+        results = asyncio.run(agent.run())
+        
+        console.print(f"[green]✅ CI Pipeline Complete: {results}[/green]")
+        
+    except Exception as e:
+        console.print(f"[red]❌ CI Pipeline failed: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def validate_schema(
+    findings_file: str = typer.Argument(..., help="Path to findings JSON file"),
+) -> None:
+    """Validate findings file against schema."""
+    
+    console.print(f"[bold blue]✅ Validating {findings_file}...[/bold blue]")
+    
+    try:
+        # Load findings
+        findings_path = Path(findings_file)
+        if not findings_path.exists():
+            console.print(f"[red]❌ File not found: {findings_file}[/red]")
+            raise typer.Exit(1)
+        
+        findings_data = json.loads(findings_path.read_text())
+        
+        # Basic validation (could be enhanced with jsonschema library)
+        required_keys = ["findings", "metadata"]
+        for key in required_keys:
+            if key not in findings_data:
+                console.print(f"[red]❌ Missing required key: {key}[/red]")
+                raise typer.Exit(1)
+        
+        # Check findings structure
+        if not isinstance(findings_data["findings"], list):
+            console.print("[red]❌ 'findings' must be a list[/red]")
+            raise typer.Exit(1)
+        
+        # Check metadata structure
+        metadata = findings_data["metadata"]
+        required_metadata = ["tool", "version", "total_findings"]
+        for key in required_metadata:
+            if key not in metadata:
+                console.print(f"[red]❌ Missing metadata key: {key}[/red]")
+                raise typer.Exit(1)
+        
+        console.print(f"[green]✅ Schema validation passed! Found {len(findings_data['findings'])} findings[/green]")
+        
+    except json.JSONDecodeError:
+        console.print(f"[red]❌ Invalid JSON in {findings_file}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]❌ Validation error: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def generate_patches(
+    findings_files: List[str] = typer.Argument(..., help="Paths to tool output files (ruff.json, semgrep.json, etc.)"),
+    artifacts_dir: str = typer.Option("artifact", "--artifacts", "-a", help="Artifacts directory for patches"),
+    base_dir: Optional[str] = typer.Option(None, "--base-dir", help="Base directory for code context"),
+) -> None:
+    """Generate AI-powered patches from existing static analysis findings.
+    
+    This command is designed for teams that already run static analysis tools
+    in their CI/CD pipeline. Instead of re-running the tools, PatchPro reads
+    the existing findings and generates patches.
+    
+    Examples:
+        # Generate patches from ruff and semgrep outputs
+        patchpro generate-patches ruff.json semgrep.json
+        
+        # With custom artifacts location
+        patchpro generate-patches findings/*.json --artifacts patches/
+        
+        # Typical CI integration
+        ruff check --output-format json . > ruff.json
+        semgrep --json . > semgrep.json
+        patchpro generate-patches ruff.json semgrep.json
+    """
+    
+    console.print("[bold blue]🤖 Generating patches from existing findings...[/bold blue]")
+    
+    try:
+        # Setup paths
+        artifacts_path = Path(artifacts_dir)
+        artifacts_path.mkdir(parents=True, exist_ok=True)
+        
+        base_path = Path(base_dir) if base_dir else Path.cwd()
+        analysis_path = artifacts_path / "analysis"
+        analysis_path.mkdir(parents=True, exist_ok=True)
+        
+        # Load all findings files
+        console.print(f"[cyan]📂 Loading findings from {len(findings_files)} file(s)...[/cyan]")
+        
+        tool_outputs = {}
+        for findings_file in findings_files:
+            findings_path = Path(findings_file)
+            if not findings_path.exists():
+                console.print(f"[yellow]⚠️  Skipping missing file: {findings_file}[/yellow]")
+                continue
+            
+            # Detect tool type
+            tool_name = _detect_tool_from_file(findings_path)
+            console.print(f"  • Loading {tool_name} findings from {findings_path.name}")
+            
+            try:
+                with open(findings_path, 'r') as f:
+                    tool_data = json.load(f)
+                    tool_outputs[tool_name] = tool_data
+                    
+                # Also save to analysis directory for AgentCore
+                tool_filename = f"{tool_name}_output.json"
+                (analysis_path / tool_filename).write_text(json.dumps(tool_data, indent=2))
+                
+            except json.JSONDecodeError:
+                console.print(f"[yellow]⚠️  Skipping invalid JSON: {findings_file}[/yellow]")
+                continue
+        
+        if not tool_outputs:
+            console.print("[red]❌ No valid findings files found[/red]")
+            raise typer.Exit(1)
+        
+        console.print(f"[green]✅ Loaded findings from {len(tool_outputs)} tool(s)[/green]")
+        
+        # Normalize findings
+        console.print("[cyan]🔄 Normalizing findings...[/cyan]")
+        analyzer = FindingsAnalyzer()
+        normalized_results = analyzer.normalize_findings(tool_outputs)
+        normalized_findings = analyzer.merge_findings(normalized_results)
+        
+        # Save normalized findings
+        normalized_findings.save(str(analysis_path / "normalized_findings.json"))
+        console.print(f"[green]✅ Normalized {len(normalized_findings.findings)} findings[/green]")
+        
+        if len(normalized_findings.findings) == 0:
+            console.print("[yellow]ℹ️  No findings to generate patches for[/yellow]")
+            return
+        
+        # Run LLM pipeline
+        console.print("[bold cyan]🤖 Generating AI patches...[/bold cyan]")
+        config = AgentConfig(
+            analysis_dir=analysis_path,
+            artifact_dir=artifacts_path,
+            base_dir=base_path,
+        )
+        
+        agent = AgentCore(config)
+        results = asyncio.run(agent.run())
+        
+        console.print(f"[green]✅ Patch generation complete: {results}[/green]")
+        
+        # Show output locations
+        patches = list(artifacts_path.glob("patch_*.diff"))
+        if patches:
+            console.print("\n[bold]Generated patches:[/bold]")
+            for patch in patches:
+                console.print(f"  📄 {patch}")
+        
+    except Exception as e:
+        console.print(f"[red]❌ Patch generation failed: {e}[/red]")
+        raise typer.Exit(1)
+
+
+def _run_ruff(paths: List[str], config: Optional[str], artifacts_dir: Path) -> Optional[List]:
+    """Run Ruff and return JSON output."""
+    try:
+        # Try to find ruff executable
+        import shutil
+        ruff_cmd = shutil.which("ruff")
+        if not ruff_cmd:
+            # Try in venv on Windows
+            venv_ruff = Path(sys.executable).parent / "ruff.exe"
+            if venv_ruff.exists():
+                ruff_cmd = str(venv_ruff)
+        
+        if not ruff_cmd:
+            raise FileNotFoundError("ruff not found")
+        
+        cmd = [ruff_cmd, "check", "--output-format=json"]
+        
+        if config:
+            cmd.extend(["--config", config])
+        
+        cmd.extend(paths)
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False  # Ruff returns non-zero when issues found
+        )
+        
+        if result.stdout:
+            output = json.loads(result.stdout)
+            # Save raw output
+            (artifacts_dir / "ruff.json").write_text(result.stdout)
+            return output
+        
+    except subprocess.CalledProcessError as e:
+        console.print(f"[yellow]⚠️  Ruff execution failed: {e}[/yellow]")
+    except json.JSONDecodeError:
+        console.print("[yellow]⚠️  Failed to parse Ruff JSON output[/yellow]")
+    except FileNotFoundError:
+        console.print("[yellow]⚠️  Ruff not found. Install with: pip install ruff[/yellow]")
+    
+    return None
+
+
+def _run_semgrep(paths: List[str], config: Optional[str], artifacts_dir: Path) -> Optional[dict]:
+    """Run Semgrep and return JSON output."""
+    try:
+        # Try to find semgrep executable  
+        import shutil
+        semgrep_cmd = shutil.which("semgrep")
+        if not semgrep_cmd:
+            # Try in venv on Windows
+            venv_semgrep = Path(sys.executable).parent / "semgrep"
+            if venv_semgrep.exists():
+                semgrep_cmd = str(venv_semgrep)
+        
+        if not semgrep_cmd:
+            raise FileNotFoundError("semgrep not found")
+        
+        cmd = [semgrep_cmd, "--json", "--quiet"]
+        
+        if config:
+            cmd.extend(["--config", config])
+        else:
+            # Use some basic rules if no config provided
+            cmd.extend(["--config=auto"])
+        
+        cmd.extend(paths)
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False  # Semgrep returns non-zero when issues found
+        )
+        
+        if result.stdout:
+            output = json.loads(result.stdout)
+            # Save raw output
+            (artifacts_dir / "semgrep.json").write_text(result.stdout)
+            return output
+        
+    except subprocess.CalledProcessError as e:
+        console.print(f"[yellow]⚠️  Semgrep execution failed: {e}[/yellow]")
+    except json.JSONDecodeError:
+        console.print("[yellow]⚠️  Failed to parse Semgrep JSON output[/yellow]")
+    except FileNotFoundError:
+        console.print("[yellow]⚠️  Semgrep not found. Install with: pip install semgrep[/yellow]")
+    
+    return None
+
+
+def _display_findings_table(findings: NormalizedFindings) -> None:
+    """Display findings in a rich table format."""
+    
+    if not findings.findings:
+        console.print("[yellow]No findings to display.[/yellow]")
+        return
+    
+    # Create summary panel
+    summary = Panel(
+        f"Tool: {findings.metadata.tool}\n"
+        f"Version: {findings.metadata.version}\n"
+        f"Timestamp: {findings.metadata.timestamp}\n"
+        f"Total Findings: {findings.metadata.total_findings}",
+        title="Analysis Summary",
+        border_style="blue"
+    )
+    console.print(summary)
+    console.print()
+    
+    # Create findings table
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("File", style="cyan", no_wrap=True)
+    table.add_column("Line", style="green", justify="right")
+    table.add_column("Rule", style="yellow")
+    table.add_column("Severity", style="red")
+    table.add_column("Category", style="blue")
+    table.add_column("Message", style="white")
+    
+    # Sort findings by file and line
+    sorted_findings = sorted(
+        findings.findings,
+        key=lambda f: (f.location.file, f.location.line)
+    )
+    
+    for finding in sorted_findings:
+        # Truncate message if too long
+        message = finding.message
+        if len(message) > 80:
+            message = message[:77] + "..."
+        
+        # Color code severity
+        severity_style = {
+            "error": "[red]ERROR[/red]",
+            "warning": "[yellow]WARNING[/yellow]",
+            "info": "[blue]INFO[/blue]",
+            "note": "[dim]NOTE[/dim]"
+        }.get(finding.severity, finding.severity)
+        
+        table.add_row(
+            finding.location.file,
+            str(finding.location.line),
+            finding.rule_id,
+            severity_style,
+            finding.category.upper(),
+            message
+        )
+    
+    console.print(table)
+
+
+@app.command()
+def watch(
+    paths: List[str] = typer.Argument(..., help="Paths to watch for changes"),
+    format: str = typer.Option("table", "--format", "-f", help="Output format (json, table)"),
+    tools: List[str] = typer.Option(["ruff"], "--tools", "-t", help="Tools to run"),
+    interval: int = typer.Option(2, "--interval", "-i", help="Watch interval in seconds"),
+) -> None:
+    """Watch files for changes and run analysis automatically."""
+    import time
+    import hashlib
+    from pathlib import Path
+    
+    console.print(f"[bold blue]👀 Watching {len(paths)} path(s) for changes...[/bold blue]")
+    console.print(f"Tools: {', '.join(tools)}")
+    console.print("Press Ctrl+C to stop")
+    
+    # Track file hashes
+    file_hashes = {}
+    
+    def get_file_hash(file_path):
+        try:
+            with open(file_path, 'rb') as f:
+                return hashlib.md5(f.read()).hexdigest()
+        except:
+            return None
+    
+    def scan_files():
+        python_files = []
+        for path in paths:
+            path_obj = Path(path)
+            if path_obj.is_file() and path_obj.suffix == '.py':
+                python_files.append(str(path_obj))
+            elif path_obj.is_dir():
+                python_files.extend([str(f) for f in path_obj.rglob('*.py')])
+        return python_files
+    
+    try:
+        while True:
+            changed_files = []
+            current_files = scan_files()
+            
+            for file_path in current_files:
+                current_hash = get_file_hash(file_path)
+                if current_hash and file_path in file_hashes:
+                    if file_hashes[file_path] != current_hash:
+                        changed_files.append(file_path)
+                file_hashes[file_path] = current_hash
+            
+            if changed_files:
+                console.print(f"\n[green]📝 Changes detected in {len(changed_files)} file(s)[/green]")
+                for file in changed_files:
+                    console.print(f"  • {file}")
+                
+                # Run analysis on changed files
+                try:
+                    analyzer = FindingsAnalyzer()
+                    tool_outputs = {}
+                    
+                    if "ruff" in tools:
+                        ruff_output = _run_ruff(changed_files, None, Path.cwd() / "artifacts")
+                        if ruff_output:
+                            tool_outputs["ruff"] = ruff_output
+                    
+                    if "semgrep" in tools:
+                        semgrep_output = _run_semgrep(changed_files, None, Path.cwd() / "artifacts")
+                        if semgrep_output:
+                            tool_outputs["semgrep"] = semgrep_output
+                    
+                    if tool_outputs:
+                        normalized_results = analyzer.normalize_findings(tool_outputs)
+                        merged_findings = analyzer.merge_findings(normalized_results)
+                        
+                        if format == "table":
+                            _display_findings_table(merged_findings)
+                        else:
+                            console.print(merged_findings.to_json())
+                        
+                        console.print(f"[green]✅ Found {len(merged_findings.findings)} findings[/green]")
+                    else:
+                        console.print("[green]✅ No issues found[/green]")
+                        
+                except Exception as e:
+                    console.print(f"[red]❌ Analysis failed: {e}[/red]")
+            
+            time.sleep(interval)
+            
+    except KeyboardInterrupt:
+        console.print("\n[yellow]👋 Watch mode stopped[/yellow]")
+
+
+@app.command()
+def diff_analyze(
+    base: str = typer.Option("origin/main", "--base", "-b", help="Base branch/commit to compare against"),
+    format: str = typer.Option("table", "--format", "-f", help="Output format (json, table)"),
+    tools: List[str] = typer.Option(["ruff"], "--tools", "-t", help="Tools to run"),
+    staged_only: bool = typer.Option(False, "--staged", help="Analyze only staged changes"),
+) -> None:
+    """Analyze only changed lines compared to base branch."""
+    import subprocess
+    
+    console.print(f"[bold blue]🔍 Analyzing changes against {base}...[/bold blue]")
+    
+    try:
+        if staged_only:
+            # Get staged files
+            result = subprocess.run(
+                ["git", "diff", "--cached", "--name-only"],
+                capture_output=True, text=True, check=True
+            )
+        else:
+            # Get changed files since base
+            result = subprocess.run(
+                ["git", "diff", f"{base}...HEAD", "--name-only"],
+                capture_output=True, text=True, check=True
+            )
+        
+        changed_files = [f.strip() for f in result.stdout.split('\n') if f.strip().endswith('.py')]
+        
+        if not changed_files:
+            console.print("[yellow]No Python files changed[/yellow]")
+            return
+        
+        console.print(f"Analyzing {len(changed_files)} changed file(s):")
+        for file in changed_files:
+            console.print(f"  • {file}")
+        
+        # Run analysis
+        analyzer = FindingsAnalyzer()
+        tool_outputs = {}
+        artifacts_dir = Path.cwd() / "artifacts"
+        
+        if "ruff" in tools:
+            ruff_output = _run_ruff(changed_files, None, artifacts_dir)
+            if ruff_output:
+                tool_outputs["ruff"] = ruff_output
+        
+        if "semgrep" in tools:
+            semgrep_output = _run_semgrep(changed_files, None, artifacts_dir)
+            if semgrep_output:
+                tool_outputs["semgrep"] = semgrep_output
+        
+        if tool_outputs:
+            normalized_results = analyzer.normalize_findings(tool_outputs)
+            merged_findings = analyzer.merge_findings(normalized_results)
+            
+            if format == "table":
+                _display_findings_table(merged_findings)
+            else:
+                console.print(merged_findings.to_json())
+            
+            console.print(f"\n[bold green]📊 Analysis Complete: {len(merged_findings.findings)} finding(s) in changed code[/bold green]")
+        else:
+            console.print("[green]✅ No issues found in changed code[/green]")
+            
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]❌ Git command failed: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]❌ Analysis failed: {e}[/red]")
+
+
+@app.command()
+def init(
+    path: str = typer.Argument(".", help="Project path to initialize"),
+    with_hooks: bool = typer.Option(False, "--hooks", help="Install git hooks"),
+    with_config: bool = typer.Option(True, "--config/--no-config", help="Create .patchpro.toml config"),
+) -> None:
+    """Initialize PatchPro for local development."""
+    from pathlib import Path
+    
+    project_path = Path(path).resolve()
+    console.print(f"[bold blue]🚀 Initializing PatchPro in {project_path}[/bold blue]")
+    
+    # Create config file
+    if with_config:
+        config_path = project_path / ".patchpro.toml"
+        if config_path.exists():
+            console.print(f"[yellow]Config file already exists: {config_path}[/yellow]")
+        else:
+            # Create default config
+            config_content = '''[analysis]
+tools = ["ruff", "semgrep"]
+exclude_patterns = ["tests/", "__pycache__/", ".venv/", ".git/"]
+max_findings_per_file = 50
+severity_threshold = "info"
+
+[ruff]
+config_file = "pyproject.toml"
+select = ["E", "F", "W", "C90", "I", "N", "UP", "B", "A", "C4", "SIM", "ARG", "PTH"]
+line_length = 88
+target_version = "py312"
+
+[semgrep]
+config = ".semgrep.yml"
+
+[llm]
+model = "gpt-4o-mini"
+max_tokens = 4000
+temperature = 0.1
+api_key_env = "OPENAI_API_KEY"
+
+[output]
+artifacts_dir = ".patchpro"
+format = "table"
+include_patches = true
+verbose = false
+'''
+            with open(config_path, 'w') as f:
+                f.write(config_content)
+            console.print(f"[green]✅ Created config file: {config_path}[/green]")
+    
+    # Create artifacts directory
+    artifacts_dir = project_path / ".patchpro"
+    artifacts_dir.mkdir(exist_ok=True)
+    console.print(f"[green]✅ Created artifacts directory: {artifacts_dir}[/green]")
+    
+    # Update .gitignore
+    gitignore_path = project_path / ".gitignore"
+    gitignore_entries = [".patchpro/", "*.patch"]
+    
+    if gitignore_path.exists():
+        with open(gitignore_path, 'r') as f:
+            existing = f.read()
+        
+        missing_entries = [entry for entry in gitignore_entries if entry not in existing]
+        if missing_entries:
+            with open(gitignore_path, 'a') as f:
+                f.write("\n# PatchPro artifacts\\n")
+                for entry in missing_entries:
+                    f.write(f"{entry}\\n")
+            console.print(f"[green]✅ Updated .gitignore with PatchPro entries[/green]")
+    else:
+        with open(gitignore_path, 'w') as f:
+            f.write("# PatchPro artifacts\\n")
+            for entry in gitignore_entries:
+                f.write(f"{entry}\\n")
+        console.print(f"[green]✅ Created .gitignore with PatchPro entries[/green]")
+    
+    # Install git hooks
+    if with_hooks:
+        # Detect the current Python executable
+        python_executable = sys.executable
+        
+        # Verify patchpro-bot is installed in this Python
+        try:
+            result = subprocess.run(
+                [python_executable, "-c", "import patchpro_bot; print(patchpro_bot.__version__)"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            version = result.stdout.strip()
+            console.print(f"[dim]Using Python: {python_executable}[/dim]")
+            console.print(f"[dim]patchpro-bot version: {version}[/dim]")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            console.print(f"[red]❌ Error: patchpro-bot not found in {python_executable}[/red]")
+            console.print(f"[yellow]Please install patchpro-bot in the current Python environment first[/yellow]")
+            return
+        
+        # Use Git to find the common directory where hooks live
+        # This handles regular repos, worktrees, submodules, bare repos, etc.
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--git-common-dir"],
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            git_common_dir = Path(result.stdout.strip())
+            
+            # Make absolute if relative
+            if not git_common_dir.is_absolute():
+                git_common_dir = (project_path / git_common_dir).resolve()
+            
+            hooks_dir = git_common_dir / "hooks"
+            hooks_dir.mkdir(exist_ok=True, parents=True)
+            
+            console.print(f"[dim]Installing hooks in: {hooks_dir}[/dim]")
+            
+            # Post-commit hook (triggers background analysis after commit)
+            post_commit_hook = hooks_dir / "post-commit"
+            post_commit_content = f'''#!/bin/bash
+# PatchPro post-commit hook
+# Triggers background analysis after commit (non-blocking)
+
+# Get files changed in last commit
+CHANGED_PY=$(git diff-tree --no-commit-id --name-only -r HEAD | grep '\\.py$')
+
+if [ -n "$CHANGED_PY" ]; then
+    # Start background analysis (non-blocking)
+    # Using specific Python: {python_executable}
+    nohup {python_executable} -m patchpro_bot.cli analyze-commit --async --with-llm > /dev/null 2>&1 &
+    echo "🤖 PatchPro analyzing your commit in the background..."
+fi
+'''
+            
+            with open(post_commit_hook, 'w') as f:
+                f.write(post_commit_content)
+            post_commit_hook.chmod(0o755)
+            console.print(f"[green]✅ Installed post-commit hook (background analysis)[/green]")
+            
+            # Pre-push hook (shows findings from background analysis)
+            pre_push_hook = hooks_dir / "pre-push"
+            pre_push_content = f'''#!/bin/bash
+# PatchPro pre-push hook
+# Shows findings from background analysis and prompts for action
+
+# Redirect stdin from terminal for interactive prompt
+# This is required because git hooks don't have stdin connected by default
+exec < /dev/tty
+
+# Run interactive prompt
+# Using specific Python: {python_executable}
+{python_executable} -m patchpro_bot.cli pre-push-prompt
+
+# Check exit code
+if [ $? -ne 0 ]; then
+    exit 1
+fi
+
+exit 0
+'''
+            
+            with open(pre_push_hook, 'w') as f:
+                f.write(pre_push_content)
+            pre_push_hook.chmod(0o755)
+            console.print(f"[green]✅ Installed pre-push hook (interactive prompt)[/green]")
+        
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            console.print(f"[yellow]⚠️ Not a git repository, skipping hooks installation[/yellow]")
+    
+    console.print("\n[bold green]🎉 PatchPro initialization complete![/bold green]")
+    
+    if with_hooks:
+        console.print("\n[bold cyan]Local Dev Workflow Enabled:[/bold cyan]")
+        console.print("• [dim]git commit[/dim] → Instant! (Analysis starts in background)")
+        console.print("• [dim]... continue working ...[/dim]")
+        console.print("• [dim]git push[/dim] → See findings & choose action")
+        console.print("   - [cyan]fix[/cyan]: Apply patches + amend + push")
+        console.print("   - [cyan]push[/cyan]: Push anyway (ignore findings)")
+        console.print("   - [cyan]cancel[/cyan]: Cancel push to fix manually")
+        console.print("\n[bold]✨ Best of both worlds: non-blocking commits + review before push![/bold]")
+    
+    console.print("\n[bold]Commands:[/bold]")
+    console.print("1. [cyan]patchpro review-findings[/cyan] - Review findings anytime")
+    console.print("2. [cyan]patchpro check-status[/cyan] - Check analysis status")
+    console.print("3. [cyan]patchpro analyze[/cyan] - Manual analysis")
+
+
+@app.command()
+def status(
+    path: str = typer.Argument(".", help="Project path to check"),
+) -> None:
+    """Show PatchPro status for current project."""
+    from pathlib import Path
+    
+    project_path = Path(path).resolve()
+    console.print(f"[bold blue]📊 PatchPro Status for {project_path.name}[/bold blue]")
+    
+    # Check config
+    config_path = project_path / ".patchpro.toml"
+    if config_path.exists():
+        console.print("[green]✅ Configuration file found[/green]")
+        # Try to load and validate config
+        try:
+            with open(config_path, 'r') as f:
+                config_content = f.read()
+            console.print(f"   📄 Config file: {config_path}")
+        except Exception as e:
+            console.print(f"[red]❌ Config file error: {e}[/red]")
+    else:
+        console.print("[yellow]⚠️ No configuration file (.patchpro.toml)[/yellow]")
+        console.print("   Run [cyan]patchpro init[/cyan] to create one")
+    
+    # Check artifacts directory
+    artifacts_dir = project_path / ".patchpro"
+    if artifacts_dir.exists():
+        console.print("[green]✅ Artifacts directory exists[/green]")
+        
+        # Check recent reports
+        reports = list(artifacts_dir.glob("report*.md"))
+        patches = list(artifacts_dir.glob("patch_*.diff"))
+        
+        if reports:
+            latest_report = max(reports, key=lambda p: p.stat().st_mtime)
+            console.print(f"   📊 Latest report: {latest_report.name}")
+        
+        if patches:
+            latest_patch = max(patches, key=lambda p: p.stat().st_mtime)
+            console.print(f"   🔧 Latest patch: {latest_patch.name}")
+    else:
+        console.print("[yellow]⚠️ No artifacts directory[/yellow]")
+    
+    # Check git hooks
+    git_dir = project_path / ".git"
+    if git_dir.exists():
+        pre_commit_hook = git_dir / "hooks" / "pre-commit"
+        if pre_commit_hook.exists():
+            console.print("[green]✅ Git pre-commit hook installed[/green]")
+        else:
+            console.print("[yellow]⚠️ No git pre-commit hook[/yellow]")
+            console.print("   Run [cyan]patchpro init --hooks[/cyan] to install")
+    else:
+        console.print("[dim]ℹ️ Not a git repository[/dim]")
+    
+    # Check tools availability
+    console.print("\n[bold]Tool Availability:[/bold]")
+    import subprocess
+    
+    tools = ["ruff", "semgrep", "python"]
+    for tool in tools:
+        try:
+            result = subprocess.run([tool, "--version"], capture_output=True, text=True)
+            if result.returncode == 0:
+                version = result.stdout.strip().split('\n')[0]
+                console.print(f"[green]✅ {tool}[/green]: {version}")
+            else:
+                console.print(f"[red]❌ {tool}[/red]: Not working")
+        except FileNotFoundError:
+            console.print(f"[red]❌ {tool}[/red]: Not installed")
+    
+    # Check Python packages
+    try:
+        import patchpro_bot
+        console.print(f"[green]✅ patchpro_bot[/green]: {patchpro_bot.__version__}")
+    except ImportError:
+        console.print("[red]❌ patchpro_bot: Not installed[/red]")
+
+
+@app.command()
+def analyze_commit(
+    async_mode: bool = typer.Option(False, "--async", help="Run analysis in background"),
+    with_llm: bool = typer.Option(False, "--with-llm", help="Include LLM patch generation"),
+    commit: str = typer.Option("HEAD", "--commit", "-c", help="Commit to analyze (default: HEAD)"),
+    artifacts_dir: str = typer.Option(".patchpro", "--artifacts", "-a", help="Artifacts directory"),
+) -> None:
+    """Analyze files changed in a commit (used by post-commit hook)."""
+    import subprocess
+    from datetime import datetime
+    
+    artifacts_path = Path(artifacts_dir)
+    artifacts_path.mkdir(parents=True, exist_ok=True)
+    
+    # Get Python files from commit
+    try:
+        result = subprocess.run(
+            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit],
+            capture_output=True, text=True, check=True
+        )
+        
+        files = [f for f in result.stdout.strip().split('\n') if f and f.endswith('.py')]
+    except subprocess.CalledProcessError:
+        console.print("[red]❌ Failed to get files from commit[/red]")
+        return
+    
+    if not files:
+        # Write idle status
+        _write_status(artifacts_path, {
+            "status": "idle",
+            "message": "No Python files to analyze",
+            "timestamp": datetime.now().isoformat()
+        })
+        return
+    
+    if async_mode:
+        # Run in background
+        import multiprocessing
+        process = multiprocessing.Process(
+            target=_run_commit_analysis,
+            args=(files, artifacts_path, with_llm)
+        )
+        process.start()
+        console.print(f"[dim]🤖 PatchPro analyzing {len(files)} file(s) in background...[/dim]")
+    else:
+        # Run synchronously
+        _run_commit_analysis(files, artifacts_path, with_llm)
+
+
+def _run_analysis_pipeline(
+    files: List[str], 
+    artifacts_path: Path, 
+    with_llm: bool = False,
+    tools: List[str] = ["ruff", "semgrep"],
+    context: str = "commit"
+) -> dict:
+    """Core analysis pipeline - reusable for commits, PRs, etc.
+    
+    Args:
+        files: List of files to analyze
+        artifacts_path: Path to store artifacts
+        with_llm: Whether to generate patches with LLM
+        tools: List of tools to run
+        context: Context string (commit, pr, manual) for logging
+        
+    Returns:
+        Status dictionary with analysis results
+    """
+    from datetime import datetime
+    
+    try:
+        # Run static analysis tools
+        analyzer = FindingsAnalyzer()
+        tool_outputs = {}
+        
+        if "ruff" in tools:
+            ruff_output = _run_ruff(files, None, artifacts_path)
+            if ruff_output:
+                tool_outputs["ruff"] = ruff_output
+        
+        if "semgrep" in tools:
+            semgrep_output = _run_semgrep(files, None, artifacts_path)
+            if semgrep_output:
+                tool_outputs["semgrep"] = semgrep_output
+        
+        # Normalize and merge findings
+        if tool_outputs:
+            normalized_results = analyzer.normalize_findings(tool_outputs)
+            merged_findings = analyzer.merge_findings(normalized_results)
+            
+            # Save findings
+            findings_file = artifacts_path / "findings.json"
+            merged_findings.save(str(findings_file))
+            
+            # Count by severity
+            critical_count = sum(1 for f in merged_findings.findings if f.severity == "error")
+            warning_count = sum(1 for f in merged_findings.findings if f.severity == "warning")
+            
+            # Optionally run LLM for patch generation
+            patches_available = False
+            if with_llm and len(merged_findings.findings) > 0:
+                try:
+                    config = AgentConfig(
+                        analysis_dir=artifacts_path,
+                        artifact_dir=artifacts_path,
+                        base_dir=Path.cwd(),
+                    )
+                    agent = AgentCore(config)
+                    asyncio.run(agent.run())
+                    patches_available = True
+                except Exception as e:
+                    console.print(f"[yellow]⚠️  LLM patch generation failed: {e}[/yellow]")
+            
+            return {
+                "status": "completed",
+                "findings_count": len(merged_findings.findings),
+                "critical_count": critical_count,
+                "warning_count": warning_count,
+                "patches_available": patches_available,
+                "files_analyzed": files,
+                "context": context,
+                "completed_at": datetime.now().isoformat()
+            }
+        else:
+            # No tool outputs
+            return {
+                "status": "completed",
+                "findings_count": 0,
+                "critical_count": 0,
+                "warning_count": 0,
+                "patches_available": False,
+                "files_analyzed": files,
+                "context": context,
+                "completed_at": datetime.now().isoformat()
+            }
+    
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "context": context,
+            "timestamp": datetime.now().isoformat()
+        }
+
+
+def _run_commit_analysis(commit_files: List[str], artifacts_path: Path, with_llm: bool = False):
+    """Run analysis on committed files (internal function for post-commit hook)."""
+    from datetime import datetime
+    
+    # Write running status
+    _write_status(artifacts_path, {
+        "status": "running",
+        "files": commit_files,
+        "context": "commit",
+        "started_at": datetime.now().isoformat()
+    })
+    
+    # Run the common analysis pipeline
+    status = _run_analysis_pipeline(
+        files=commit_files,
+        artifacts_path=artifacts_path,
+        with_llm=with_llm,
+        context="commit"
+    )
+    
+    # Write status
+    _write_status(artifacts_path, status)
+
+
+def _write_status(artifacts_path: Path, status_data: dict):
+    """Write status to status.json file."""
+    status_file = artifacts_path / "status.json"
+    with open(status_file, 'w') as f:
+        json.dump(status_data, f, indent=2)
+
+
+def _read_status(artifacts_path: Path) -> dict:
+    """Read status from status.json file."""
+    status_file = artifacts_path / "status.json"
+    if status_file.exists():
+        with open(status_file, 'r') as f:
+            return json.load(f)
+    return {"status": "idle"}
+
+
+def _parse_finding(f: dict) -> Finding:
+    """Parse a finding from JSON, handling both flat and nested formats."""
+    from .analyzer import Location, Suggestion, Replacement, Position
+    
+    # Handle nested format (from AgentCore) - already proper structure
+    if 'location' in f and isinstance(f['location'], dict):
+        location = Location(
+            file=f['location']['file'],
+            line=f['location']['line'],
+            column=f['location'].get('column', 1),
+            end_line=f['location'].get('end_line'),
+            end_column=f['location'].get('end_column')
+        )
+        
+        # Parse suggestion if present
+        suggestion = None
+        if f.get('suggestion'):
+            sug = f['suggestion']
+            replacements = []
+            if sug.get('replacements'):
+                for repl in sug['replacements']:
+                    replacements.append(Replacement(
+                        start=Position(line=repl['start']['line'], column=repl['start']['column']),
+                        end=Position(line=repl['end']['line'], column=repl['end']['column']),
+                        content=repl.get('content', '')
+                    ))
+            suggestion = Suggestion(message=sug['message'], replacements=replacements)
+        
+        return Finding(
+            id=f.get('id', 'unknown'),
+            rule_id=f.get('rule_id', f.get('code', 'unknown')),
+            rule_name=f.get('rule_name', f.get('code', 'unknown')),
+            message=f['message'],
+            severity=f['severity'],
+            category=f.get('category', 'unknown'),
+            location=location,
+            source_tool=f.get('source_tool', f.get('tool', 'unknown')),
+            suggestion=suggestion
+        )
+    # Handle flat format (legacy) - convert to proper structure
+    else:
+        location = Location(
+            file=f['file'],
+            line=f['line'],
+            column=f.get('column', 1)
+        )
+        return Finding(
+            id=f.get('id', 'unknown'),
+            rule_id=f.get('code', 'unknown'),
+            rule_name=f.get('code', 'unknown'),
+            message=f['message'],
+            severity=f['severity'],
+            category=f.get('category', 'unknown'),
+            location=location,
+            source_tool=f.get('tool', 'unknown'),
+            suggestion=None
+        )
+
+
+@app.command()
+def analyze_pr(
+    base: str = typer.Option("origin/main", "--base", "-b", help="Base branch to compare against"),
+    head: str = typer.Option("HEAD", "--head", "-h", help="Head commit to analyze"),
+    with_llm: bool = typer.Option(True, "--with-llm/--no-llm", help="Include LLM patch generation"),
+    artifacts_dir: str = typer.Option(".patchpro", "--artifacts", "-a", help="Artifacts directory"),
+    tools: List[str] = typer.Option(["ruff", "semgrep"], "--tools", "-t", help="Tools to run"),
+    exit_code: bool = typer.Option(True, "--exit-code/--no-exit-code", help="Exit with non-zero if issues found"),
+) -> None:
+    """Analyze files changed in PR (for CI/CD pipelines).
+    
+    This command is designed for CI/CD pipelines to analyze only the files
+    changed in a pull request, generate patches, and optionally fail the build
+    if critical issues are found.
+    
+    Examples:
+        # In GitHub Actions
+        patchpro analyze-pr --base origin/main --head HEAD
+        
+        # In GitLab CI comparing merge request
+        patchpro analyze-pr --base origin/$CI_MERGE_REQUEST_TARGET_BRANCH_NAME
+        
+        # Don't fail build on findings (report only)
+        patchpro analyze-pr --no-exit-code
+    """
+    import subprocess
+    from datetime import datetime
+    
+    artifacts_path = Path(artifacts_dir)
+    artifacts_path.mkdir(parents=True, exist_ok=True)
+    
+    console.print(f"[bold blue]🔍 Analyzing PR changes ({base}...{head})[/bold blue]")
+    
+    # Get Python files changed in PR
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", f"{base}...{head}"],
+            capture_output=True, text=True, check=True
+        )
+        
+        files = [f for f in result.stdout.strip().split('\n') if f and f.endswith('.py')]
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]❌ Failed to get changed files: {e}[/red]")
+        if exit_code:
+            raise typer.Exit(1)
+        return
+    
+    if not files:
+        console.print("[green]✅ No Python files changed in PR[/green]")
+        _write_status(artifacts_path, {
+            "status": "idle",
+            "message": "No Python files to analyze",
+            "context": "pr",
+            "timestamp": datetime.now().isoformat()
+        })
+        sys.exit(0)
+    
+    console.print(f"[cyan]Analyzing {len(files)} changed file(s)...[/cyan]")
+    for file in files:
+        console.print(f"  • {file}")
+    
+    # Write running status
+    _write_status(artifacts_path, {
+        "status": "running",
+        "files": files,
+        "context": "pr",
+        "base": base,
+        "head": head,
+        "started_at": datetime.now().isoformat()
+    })
+    
+    # Run the common analysis pipeline
+    status = _run_analysis_pipeline(
+        files=files,
+        artifacts_path=artifacts_path,
+        with_llm=with_llm,
+        tools=tools,
+        context="pr"
+    )
+    
+    # Write status
+    _write_status(artifacts_path, status)
+    
+    # Display results
+    findings_count = status.get("findings_count", 0)
+    critical_count = status.get("critical_count", 0)
+    
+    if findings_count == 0:
+        console.print("\n[bold green]✅ No issues found in PR changes![/bold green]")
+        sys.exit(0)
+    
+    # Show findings
+    console.print(f"\n[yellow]⚠️  Found {findings_count} issue(s) in PR changes[/yellow]")
+    if critical_count > 0:
+        console.print(f"   🔴 {critical_count} critical issue(s)")
+    if status.get("patches_available"):
+        console.print(f"   🔧 Patches available in {artifacts_dir}/")
+    
+    # Show findings table
+    findings_file = artifacts_path / "findings.json"
+    if findings_file.exists():
+        findings_data = json.loads(findings_file.read_text())
+        findings_list = [_parse_finding(f) for f in findings_data['findings']]
+        
+        if 'metadata' in findings_data:
+            metadata = Metadata(
+                tool=findings_data['metadata'].get('tool', 'unknown'),
+                version=findings_data['metadata'].get('version', 'unknown'),
+                total_findings=findings_data['metadata'].get('total_findings', len(findings_list))
+            )
+        else:
+            metadata = Metadata(tool='merged', version='1.0', total_findings=len(findings_list))
+        
+        findings = NormalizedFindings(findings=findings_list, metadata=metadata)
+        _display_findings_table(findings)
+    
+    console.print()
+    
+    # Show patch locations
+    patches = list(artifacts_path.glob("patch_*.diff"))
+    if patches:
+        console.print("[bold]Generated patches:[/bold]")
+        for patch in patches:
+            console.print(f"  📄 {patch}")
+    
+    # Exit with appropriate code
+    if exit_code and critical_count > 0:
+        console.print("\n[red]❌ Critical issues found - failing build[/red]")
+        sys.exit(1)
+    elif exit_code and findings_count > 0:
+        console.print("\n[yellow]⚠️  Non-critical issues found[/yellow]")
+        sys.exit(0)
+    else:
+        sys.exit(0)
+
+
+@app.command()
+def check_status(
+    artifacts_dir: str = typer.Option(".patchpro", "--artifacts", "-a", help="Artifacts directory"),
+) -> None:
+    """Check PatchPro analysis status."""
+    artifacts_path = Path(artifacts_dir)
+    status = _read_status(artifacts_path)
+    
+    if status["status"] == "idle":
+        console.print("[dim]No active analysis[/dim]")
+    elif status["status"] == "running":
+        console.print("[yellow]🤖 Analysis running...[/yellow]")
+        if "files" in status:
+            console.print(f"   Files: {', '.join(status['files'])}")
+    elif status["status"] == "completed":
+        findings_count = status.get("findings_count", 0)
+        critical_count = status.get("critical_count", 0)
+        
+        if findings_count == 0:
+            console.print("[green]✅ No issues found[/green]")
+        else:
+            console.print(f"[yellow]⚠️  Found {findings_count} issue(s)[/yellow]")
+            if critical_count > 0:
+                console.print(f"   🔴 {critical_count} critical")
+            if status.get("patches_available"):
+                console.print("   🔧 Patches available")
+    elif status["status"] == "error":
+        console.print(f"[red]❌ Analysis failed: {status.get('error', 'Unknown error')}[/red]")
+
+
+@app.command()
+def pre_push_check(
+    artifacts_dir: str = typer.Option(".patchpro", "--artifacts", "-a", help="Artifacts directory"),
+) -> None:
+    """Pre-push hook: analyze and prompt before push."""
+    from rich.prompt import Prompt
+    import subprocess
+    from datetime import datetime
+    
+    artifacts_path = Path(artifacts_dir)
+    artifacts_path.mkdir(parents=True, exist_ok=True)
+    
+    console.print("[cyan]Analyzing your changes...[/cyan]")
+    
+    # Run analysis on files that will be pushed
+    try:
+        # Get commits being pushed
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "@{u}"],
+            capture_output=True, text=True
+        )
+        
+        if result.returncode == 0:
+            # Remote tracking exists, get diff
+            result = subprocess.run(
+                ["git", "diff", "--name-only", "@{u}..HEAD"],
+                capture_output=True, text=True, check=True
+            )
+        else:
+            # No remote tracking, get all Python files
+            result = subprocess.run(
+                ["git", "ls-files", "*.py"],
+                capture_output=True, text=True, check=True
+            )
+        
+        files = [f for f in result.stdout.strip().split('\n') if f and f.endswith('.py')]
+        
+        if not files:
+            console.print("[green]✅ No Python files to analyze[/green]")
+            sys.exit(0)
+        
+        console.print(f"   Analyzing {len(files)} Python file(s)...")
+        
+        # Run analysis synchronously
+        _run_commit_analysis(files, artifacts_path, with_llm=True)
+        
+        # Read status
+        status = _read_status(artifacts_path)
+        
+        if status["status"] != "completed":
+            console.print("[yellow]⚠️ Analysis failed, allowing push[/yellow]")
+            sys.exit(0)
+        
+        findings_count = status.get("findings_count", 0)
+        critical_count = status.get("critical_count", 0)
+        
+        if findings_count == 0:
+            console.print("[green]✅ No issues found, proceeding with push[/green]")
+            sys.exit(0)
+        
+        # Show findings
+        console.print(f"\n[yellow]⚠️  Found {findings_count} issue(s) in files being pushed[/yellow]")
+        if critical_count > 0:
+            console.print(f"   🔴 {critical_count} critical")
+        if status.get("patches_available"):
+            console.print(f"   🔧 Patches available")
+        
+        # Show findings table
+        findings_file = artifacts_path / "findings.json"
+        if findings_file.exists():
+            findings_data = json.loads(findings_file.read_text())
+            findings_list = [
+                Finding(
+                    file=f['file'],
+                    line=f['line'],
+                    column=f.get('column', 1),
+                    severity=f['severity'],
+                    code=f['code'],
+                    message=f['message'],
+                    tool=f['tool']
+                )
+                for f in findings_data['findings']
+            ]
+            metadata = Metadata(
+                tool=findings_data['metadata']['tool'],
+                version=findings_data['metadata'].get('version', 'unknown'),
+                total_findings=findings_data['metadata']['total_findings']
+            )
+            findings = NormalizedFindings(findings=findings_list, metadata=metadata)
+            _display_findings_table(findings)
+        
+        console.print()
+        
+        # Prompt for action
+        choice = Prompt.ask(
+            "What do you want to do?",
+            choices=["fix", "push", "cancel"],
+            default="fix",
+            show_choices=True
+        )
+        
+        if choice == "fix":
+            # Try to apply patches and amend last commit
+            patches = list(artifacts_path.glob("patch_*.diff"))
+            if patches:
+                latest_patch = max(patches, key=lambda p: p.stat().st_mtime)
+                console.print(f"[cyan]Applying patch: {latest_patch.name}[/cyan]")
+                
+                # Apply patch
+                result = subprocess.run(
+                    ["git", "apply", str(latest_patch)],
+                    capture_output=True, text=True
+                )
+                
+                if result.returncode == 0:
+                    console.print("[green]✅ Patch applied successfully[/green]")
+                    
+                    # Stage changes
+                    subprocess.run(["git", "add", "-u"], capture_output=True)
+                    
+                    # Amend last commit
+                    console.print("[cyan]Amending last commit...[/cyan]")
+                    amend_result = subprocess.run(
+                        ["git", "commit", "--amend", "--no-edit"],
+                        capture_output=True, text=True
+                    )
+                    
+                    if amend_result.returncode == 0:
+                        console.print("[green]✅ Commit amended with fixes[/green]")
+                        console.print("[cyan]🚀 Continuing with push...[/cyan]")
+                        # Clear status and allow push
+                        _write_status(artifacts_path, {"status": "idle"})
+                        sys.exit(0)
+                    else:
+                        console.print(f"[red]❌ Failed to amend: {amend_result.stderr}[/red]")
+                        console.print("[yellow]Push cancelled[/yellow]")
+                        sys.exit(1)
+                else:
+                    console.print(f"[yellow]⚠️  Patch didn't apply cleanly: {result.stderr}[/yellow]")
+                    console.print("[cyan]Please fix manually and push again[/cyan]")
+                    sys.exit(1)
+            else:
+                console.print("[yellow]No patches available - requires manual fixes[/yellow]")
+                console.print("[cyan]Fix the issues and push again[/cyan]")
+                sys.exit(1)
+        
+        elif choice == "push":
+            console.print("[yellow]Proceeding with push despite findings...[/yellow]")
+            _write_status(artifacts_path, {"status": "idle"})
+            sys.exit(0)
+        
+        else:  # cancel
+            console.print("[yellow]Push cancelled[/yellow]")
+            sys.exit(1)
+    
+    except Exception as e:
+        console.print(f"[red]❌ Error during pre-push check: {e}[/red]")
+        console.print("[yellow]Allowing push to continue[/yellow]")
+        sys.exit(0)
+
+
+@app.command()
+def pre_push_prompt(
+    artifacts_dir: str = typer.Option(".patchpro", "--artifacts", "-a", help="Artifacts directory"),
+) -> None:
+    """Interactive prompt during pre-push hook to review findings."""
+    from rich.prompt import Prompt
+    
+    artifacts_path = Path(artifacts_dir)
+    status = _read_status(artifacts_path)
+    
+    # If no analysis or idle, allow push
+    if status["status"] not in ["running", "completed"]:
+        sys.exit(0)
+    
+    if status["status"] == "running":
+        console.print("[yellow]🤖 PatchPro is still analyzing...[/yellow]")
+        choice = Prompt.ask(
+            "Action",
+            choices=["wait", "push", "cancel"],
+            default="push"
+        )
+        
+        if choice == "wait":
+            import time
+            console.print("Waiting for analysis...")
+            for i in range(10):
+                time.sleep(1)
+                status = _read_status(artifacts_path)
+                if status["status"] != "running":
+                    break
+                console.print(f"  {i+1}s...")
+            
+            if status["status"] == "running":
+                console.print("[yellow]Analysis still running, proceeding with push[/yellow]")
+                sys.exit(0)
+            # Fall through to show completed results
+        elif choice == "push":
+            sys.exit(0)
+        else:  # cancel
+            console.print("[yellow]Push cancelled[/yellow]")
+            sys.exit(1)
+    
+    # Status is completed, show findings
+    findings_count = status.get("findings_count", 0)
+    critical_count = status.get("critical_count", 0)
+    
+    if findings_count == 0:
+        console.print("[green]✅ No issues found, proceeding with push[/green]")
+        sys.exit(0)
+    
+    # Show findings
+    console.print(f"\n[yellow]⚠️  PatchPro found {findings_count} issue(s)[/yellow]")
+    if critical_count > 0:
+        console.print(f"   🔴 {critical_count} critical issue(s)")
+    if status.get("patches_available"):
+        console.print(f"   🔧 Patches available in {artifacts_dir}/")
+    
+    console.print()
+    
+    # Show findings table
+    findings_file = artifacts_path / "findings.json"
+    if findings_file.exists():
+        findings_data = json.loads(findings_file.read_text())
+        findings_list = [_parse_finding(f) for f in findings_data['findings']]
+        
+        # Get metadata
+        if 'metadata' in findings_data:
+            metadata = Metadata(
+                tool=findings_data['metadata'].get('tool', 'unknown'),
+                version=findings_data['metadata'].get('version', 'unknown'),
+                total_findings=findings_data['metadata'].get('total_findings', len(findings_list))
+            )
+        else:
+            metadata = Metadata(tool='unknown', version='unknown', total_findings=len(findings_list))
+        
+        findings = NormalizedFindings(findings=findings_list, metadata=metadata)
+        _display_findings_table(findings)
+    
+    console.print()
+    
+    # Force flush to ensure prompt appears immediately
+    console.file.flush()  # Flush rich console
+    sys.stdout.flush()
+    sys.stderr.flush()
+    
+    choice = Prompt.ask(
+        "Action",
+        choices=["fix", "push", "cancel"],
+        default="fix",
+        show_choices=True
+    )
+    
+    if choice == "fix":
+        # Try to apply patches and amend commit
+        patches = list(artifacts_path.glob("patch_combined_*.diff"))
+        if not patches:
+            patches = list(artifacts_path.glob("patch_*.diff"))
+        
+        if patches:
+            latest_patch = max(patches, key=lambda p: p.stat().st_mtime)
+            console.print(f"[cyan]Applying patch: {latest_patch.name}[/cyan]")
+            
+            # Apply patch
+            result = subprocess.run(
+                ["git", "apply", str(latest_patch)],
+                capture_output=True, text=True
+            )
+            
+            if result.returncode == 0:
+                console.print("[green]✅ Patch applied successfully[/green]")
+                
+                # Stage changes
+                subprocess.run(["git", "add", "-u"], capture_output=True)
+                
+                # Amend commit
+                amend_result = subprocess.run(
+                    ["git", "commit", "--amend", "--no-edit"],
+                    capture_output=True, text=True
+                )
+                
+                if amend_result.returncode == 0:
+                    console.print("[green]✅ Commit amended with fixes[/green]")
+                    console.print("[cyan]Continuing with push...[/cyan]")
+                    # Clear status
+                    _write_status(artifacts_path, {"status": "idle"})
+                    sys.exit(0)
+                else:
+                    console.print(f"[red]❌ Failed to amend: {amend_result.stderr}[/red]")
+                    sys.exit(1)
+            else:
+                console.print(f"[red]❌ Failed to apply patch: {result.stderr}[/red]")
+                console.print("[yellow]Push cancelled - fix conflicts manually[/yellow]")
+                sys.exit(1)
+        else:
+            console.print("[yellow]No patches available - findings need manual fixes[/yellow]")
+            console.print("[yellow]Push cancelled - fix issues manually[/yellow]")
+            sys.exit(1)
+    
+    elif choice == "push":
+        console.print("[dim]Pushing despite findings...[/dim]")
+        # Clear status so next push doesn't complain
+        _write_status(artifacts_path, {"status": "idle"})
+        sys.exit(0)
+    
+    else:  # cancel
+        console.print("[yellow]Push cancelled[/yellow]")
+        sys.exit(1)
+
+
+@app.command()
+def review_findings(
+    artifacts_dir: str = typer.Option(".patchpro", "--artifacts", "-a", help="Artifacts directory"),
+    auto_amend: bool = typer.Option(False, "--auto-amend", help="Automatically amend commit if patches apply cleanly"),
+) -> None:
+    """Review findings from last commit and optionally amend."""
+    from rich.prompt import Prompt
+    
+    artifacts_path = Path(artifacts_dir)
+    status = _read_status(artifacts_path)
+    
+    if status["status"] == "running":
+        console.print("[yellow]🤖 PatchPro is still analyzing your last commit...[/yellow]")
+        console.print("[dim]Run 'patchpro review-findings' again when ready[/dim]")
+        return
+    
+    if status["status"] != "completed":
+        console.print("[dim]No recent analysis results[/dim]")
+        return
+    
+    findings_count = status.get("findings_count", 0)
+    critical_count = status.get("critical_count", 0)
+    
+    if findings_count == 0:
+        console.print("[green]✅ No issues found in last commit[/green]")
+        return
+    
+    # Show findings summary
+    console.print(f"\n[yellow]⚠️  PatchPro found {findings_count} issue(s) in your last commit[/yellow]")
+    if critical_count > 0:
+        console.print(f"   🔴 {critical_count} critical issue(s)")
+    if status.get("patches_available"):
+        console.print(f"   🔧 Patches available in {artifacts_dir}/")
+    
+    console.print()
+    
+    # Show findings table
+    findings_file = artifacts_path / "findings.json"
+    if findings_file.exists():
+        findings_data = json.loads(findings_file.read_text())
+        findings_list = [
+            Finding(
+                file=f['file'],
+                line=f['line'],
+                column=f.get('column', 1),
+                severity=f['severity'],
+                code=f['code'],
+                message=f['message'],
+                tool=f['tool']
+            )
+            for f in findings_data['findings']
+        ]
+        metadata = Metadata(
+            tool=findings_data['metadata']['tool'],
+            version=findings_data['metadata'].get('version', 'unknown'),
+            total_findings=findings_data['metadata']['total_findings']
+        )
+        findings = NormalizedFindings(findings=findings_list, metadata=metadata)
+        _display_findings_table(findings)
+    
+    console.print()
+    
+    if auto_amend:
+        choice = "amend"
+    else:
+        choice = Prompt.ask(
+            "Action",
+            choices=["amend", "ignore", "manual"],
+            default="amend",
+            show_choices=True
+        )
+    
+    if choice == "amend":
+        # Try to apply patches and amend commit
+        patches = list(artifacts_path.glob("patch_combined_*.diff"))
+        if patches:
+            latest_patch = max(patches, key=lambda p: p.stat().st_mtime)
+            console.print(f"[cyan]Applying patch: {latest_patch.name}[/cyan]")
+            
+            # Apply patch
+            result = subprocess.run(
+                ["git", "apply", str(latest_patch)],
+                capture_output=True, text=True
+            )
+            
+            if result.returncode == 0:
+                console.print("[green]✅ Patch applied successfully[/green]")
+                
+                # Stage changes
+                subprocess.run(["git", "add", "-u"], capture_output=True)
+                
+                # Amend commit
+                amend_result = subprocess.run(
+                    ["git", "commit", "--amend", "--no-edit"],
+                    capture_output=True, text=True
+                )
+                
+                if amend_result.returncode == 0:
+                    console.print("[green]✅ Commit amended with fixes[/green]")
+                    # Clear status
+                    _write_status(artifacts_path, {"status": "idle"})
+                else:
+                    console.print(f"[red]❌ Failed to amend: {amend_result.stderr}[/red]")
+            else:
+                console.print(f"[red]❌ Failed to apply patch: {result.stderr}[/red]")
+                console.print("[yellow]You may need to apply fixes manually[/yellow]")
+        else:
+            console.print("[yellow]No patches available - findings need manual fixes[/yellow]")
+    
+    elif choice == "manual":
+        console.print(f"[cyan]View findings in: {artifacts_dir}/findings.json[/cyan]")
+        if patches := list(artifacts_path.glob("patch_combined_*.diff")):
+            latest_patch = max(patches, key=lambda p: p.stat().st_mtime)
+            console.print(f"[cyan]View patch in: {latest_patch}[/cyan]")
+        console.print("[dim]After fixing, run: git commit --amend --no-edit[/dim]")
+    
+    else:  # ignore
+        console.print("[dim]Ignoring findings, proceeding with push[/dim]")
+        # Clear status so pre-push doesn't complain
+        _write_status(artifacts_path, {"status": "idle"})
+
+
+@app.command()
+def pre_commit_prompt(
+    artifacts_dir: str = typer.Option(".patchpro", "--artifacts", "-a", help="Artifacts directory"),
+) -> None:
+    """Interactive prompt for pre-commit when findings exist."""
+    from rich.prompt import Prompt
+    
+    artifacts_path = Path(artifacts_dir)
+    status = _read_status(artifacts_path)
+    
+    if status["status"] == "running":
+        console.print("[yellow]🤖 PatchPro is still analyzing...[/yellow]")
+        choice = Prompt.ask(
+            "Action",
+            choices=["wait", "commit", "cancel"],
+            default="commit"
+        )
+        
+        if choice == "wait":
+            import time
+            console.print("Waiting for analysis...")
+            for i in range(10):
+                time.sleep(1)
+                status = _read_status(artifacts_path)
+                if status["status"] != "running":
+                    break
+                console.print(f"  {i+1}s...")
+            
+            if status["status"] == "running":
+                console.print("[yellow]Analysis still running, proceeding with commit[/yellow]")
+                sys.exit(0)
+            else:
+                # Re-run prompt with completed status
+                pre_commit_prompt(artifacts_dir)
+                return
+        elif choice == "commit":
+            console.print("[dim]Proceeding with commit...[/dim]")
+            sys.exit(0)
+        else:
+            console.print("[yellow]Commit cancelled[/yellow]")
+            sys.exit(1)
+    
+    elif status["status"] == "completed":
+        findings_count = status.get("findings_count", 0)
+        critical_count = status.get("critical_count", 0)
+        
+        if findings_count == 0:
+            console.print("[green]✅ No issues found, proceeding with commit[/green]")
+            sys.exit(0)
+        
+        # Show findings
+        console.print(f"\n[yellow]⚠️  PatchPro found {findings_count} issue(s)[/yellow]")
+        if critical_count > 0:
+            console.print(f"   🔴 {critical_count} critical issue(s)")
+        if status.get("patches_available"):
+            console.print(f"   🔧 Patches available in {artifacts_dir}/")
+        
+        console.print()
+        
+        choice = Prompt.ask(
+            "Action",
+            choices=["view", "apply", "commit", "cancel"],
+            default="view"
+        )
+        
+        if choice == "view":
+            # Show findings table
+            findings_file = artifacts_path / "findings.json"
+            if findings_file.exists():
+                findings_data = json.loads(findings_file.read_text())
+                # Create NormalizedFindings from dict
+                findings_list = [
+                    Finding(
+                        file=f['file'],
+                        line=f['line'],
+                        column=f.get('column', 1),
+                        severity=f['severity'],
+                        code=f['code'],
+                        message=f['message'],
+                        tool=f['tool']
+                    )
+                    for f in findings_data['findings']
+                ]
+                metadata = Metadata(
+                    tool=findings_data['metadata']['tool'],
+                    version=findings_data['metadata'].get('version', 'unknown'),
+                    total_findings=findings_data['metadata']['total_findings']
+                )
+                findings = NormalizedFindings(findings=findings_list, metadata=metadata)
+                _display_findings_table(findings)
+            
+            # Ask again
+            choice2 = Prompt.ask(
+                "Action",
+                choices=["apply", "commit", "cancel"],
+                default="commit"
+            )
+            choice = choice2
+        
+        if choice == "apply":
+            # Apply patches
+            patches = list(artifacts_path.glob("patch_combined_*.diff"))
+            if patches:
+                latest_patch = max(patches, key=lambda p: p.stat().st_mtime)
+                console.print(f"[cyan]Applying patch: {latest_patch.name}[/cyan]")
+                result = subprocess.run(
+                    ["git", "apply", str(latest_patch)],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    console.print("[green]✅ Patch applied successfully[/green]")
+                    console.print("[yellow]Please stage the changes and commit again[/yellow]")
+                    sys.exit(1)  # Stop commit so user can stage patch changes
+                else:
+                    console.print(f"[red]❌ Failed to apply patch: {result.stderr}[/red]")
+                    console.print("[yellow]Proceeding with commit anyway[/yellow]")
+                    sys.exit(0)
+            else:
+                console.print("[yellow]No patches found[/yellow]")
+                sys.exit(0)
+        
+        elif choice == "commit":
+            console.print("[dim]Proceeding with commit despite findings...[/dim]")
+            sys.exit(0)
+        else:
+            console.print("[yellow]Commit cancelled[/yellow]")
+            sys.exit(1)
+    
+    else:
+        # Idle or error - allow commit
+        console.print("[dim]No analysis results, proceeding with commit[/dim]")
+        sys.exit(0)
+
+
+if __name__ == "__main__":
+    app()

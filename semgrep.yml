@@ -1,0 +1,138 @@
+# Semgrep configuration for PatchPro static analysis
+# See: https://semgrep.dev/docs/writing-rules/rule-syntax/
+
+rules:
+  # Python Security Rules
+  - id: python-security-hardcoded-password
+    pattern: |
+      password = "..."
+    message: "Hardcoded password detected"
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      confidence: HIGH
+  
+  - id: python-security-sql-injection-format
+    pattern: |
+      cursor.execute($FMT % ...)
+    message: "SQL injection vulnerability via string formatting"
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      confidence: HIGH
+  
+  - id: python-security-exec-eval
+    patterns:
+      - pattern: exec(...)
+      - pattern: eval(...)
+    message: "Use of exec() or eval() is dangerous"
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-95: Code Injection"
+      confidence: MEDIUM
+  
+  # Python Code Quality Rules
+  - id: python-correctness-assert-used
+    pattern: |
+      assert $CONDITION
+    message: "Assert statements are removed in optimized mode"
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: correctness
+      confidence: MEDIUM
+  
+  - id: python-performance-list-comprehension
+    pattern: |
+      list(filter($FUNC, $LIST))
+    message: "Use list comprehension instead of filter() for better performance"
+    languages: [python]
+    severity: INFO
+    metadata:
+      category: performance
+      confidence: MEDIUM
+  
+  - id: python-style-f-string
+    patterns:
+      - pattern: '"{} {}".format($A, $B)'
+      - pattern: '"{0} {1}".format($A, $B)'
+    message: "Use f-strings for string formatting"
+    languages: [python]
+    severity: INFO
+    metadata:
+      category: style
+      confidence: HIGH
+  
+  # Import and Dependencies
+  - id: python-imports-deprecated-modules
+    patterns:
+      - pattern: import imp
+      - pattern: from imp import ...
+      - pattern: import optparse
+      - pattern: from optparse import ...
+    message: "Using deprecated module"
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: correctness
+      confidence: HIGH
+  
+  # Exception Handling
+  - id: python-correctness-bare-except
+    pattern: |
+      try:
+        ...
+      except:
+        ...
+    message: "Bare except clause catches all exceptions"
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: correctness
+      confidence: HIGH
+  
+  - id: python-correctness-exception-base-class
+    pattern: |
+      raise $MSG
+    message: "Raise an Exception instance, not a string"
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: correctness
+      confidence: HIGH
+    paths:
+      exclude:
+        - "*.py"
+    patterns:
+      - pattern-not: raise Exception(...)
+      - pattern-not: raise $EXCEPTION(...)
+      - pattern-not: raise $EXCEPTION
+  
+  # Type Hints and Annotations
+  - id: python-typing-optional-instead-of-union
+    pattern: |
+      Union[$TYPE, None]
+    message: "Use Optional[T] instead of Union[T, None]"
+    languages: [python]
+    severity: INFO
+    metadata:
+      category: typing
+      confidence: HIGH
+  
+  # Logging Best Practices
+  - id: python-logging-format-string
+    patterns:
+      - pattern: logging.$LEVEL("..." % ...)
+      - pattern: logger.$LEVEL("..." % ...)
+    message: "Use logging format strings instead of % formatting"
+    languages: [python]
+    severity: INFO
+    metadata:
+      category: style
+      confidence: HIGH

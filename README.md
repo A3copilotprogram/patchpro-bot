@@ -1,2 +1,576 @@
 # patchpro-bot
-PatchPro: CI code-repair assistant
+
+PatchPro: CI code-repair assistant that analyzes code using Ruff and Semgrep, then generates intelligent patch suggestions using LLM with professional finding normalization and deduplication.
+
+## Quick Start
+
+**For Collaborators:** See [DEVELOPMENT.md](./DEVELOPMENT.md) for complete setup and testing instructions.
+
+**For End Users:** Try the [demo repository](https://github.com/A3copilotprogram/patchpro-demo-repo) to see PatchPro in action.
+
+```bash
+# Quick test with demo repo
+git clone <demo-repo-url>
+cd patchpro-demo-repo
+echo "OPENAI_API_KEY=your-key" > .env
+uv run --with /path/to/patchpro-bot-agent-dev python -m patchpro_bot.run_ci
+```
+
+## Overview
+
+PatchPro Bot is a comprehensive code analysis and patch generation tool that:
+
+1. **Reads** JSON analysis reports from Ruff (Python linter) and Semgrep (static analysis)
+2. **Processes** findings with deduplication, prioritization, and aggregation
+3. **Generates** intelligent code fixes using OpenAI's LLM
+4. **Creates** unified diff patches that can be applied to fix the issues
+5. **Reports** comprehensive analysis results and patch summaries
+
+## Architecture
+
+The codebase follows the pipeline described in this mermaid diagram:
+
+```mermaid
+flowchart TD
+ A[patchpro-demo-repo PR] --> B[GitHub Actions CI] 
+ subgraph Analysis
+   direction LR
+   C1[Ruff ▶ JSON]
+   C2[Semgrep ▶ JSON]
+ end
+ B --> C{Analyzers}
+ C --> C1[Ruff: lint issues to JSON]
+ C --> C2[Semgrep: patterns to JSON]
+ C1 & C2 --> D[Artifact storage: artifact/analysis/*.json]
+ D --> E[Agent Core]
+ E --> F[LLM: OpenAI call prompt toolkit]
+ F --> G[Unified diff + rationale: patch_*.diff]
+ G & D --> H[Report generator: report.md]
+ H --> I[Sticky PR comment]
+ I --> J[Eval/QA judge & metrics: artifact/run_metrics.json]
+```
+
+## Project Structure
+
+```
+src/patchpro_bot/
+├── __init__.py              # Package exports
+├── agent_core.py            # Main orchestrator
+├── run_ci.py               # Legacy CI runner (delegates to agent_core)
+├── analysis/               # Analysis reading and aggregation
+│   ├── __init__.py
+│   ├── reader.py           # JSON file reader for Ruff/Semgrep
+│   └── aggregator.py       # Finding aggregation and processing
+├── models/                 # Pydantic data models
+│   ├── __init__.py
+│   ├── common.py           # Shared models and enums
+│   ├── ruff.py            # Ruff-specific models
+│   └── semgrep.py         # Semgrep-specific models
+├── llm/                   # LLM integration
+│   ├── __init__.py
+│   ├── client.py          # OpenAI client wrapper
+│   ├── prompts.py         # Prompt templates and builders
+│   └── response_parser.py # Parse LLM responses
+└── diff/                  # Diff generation and patch writing
+    ├── __init__.py
+    ├── file_reader.py     # Source file reading
+    ├── generator.py       # Unified diff generation
+    └── patch_writer.py    # Patch file writing
+```
+
+## Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone <repository-url>
+   cd patchpro-bot
+   ```
+
+2. **Create and activate virtual environment**:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
+
+3. **Install the package**:
+   ```bash
+   pip install -e .
+   ```
+
+4. **Install development dependencies** (optional):
+   ```bash
+   pip install -e ".[dev]"
+   ```
+
+## Usage
+
+### Basic Usage
+
+1. **Set up your OpenAI API key**:
+   ```bash
+   export OPENAI_API_KEY="your-openai-api-key-here"
+   ```
+
+2. **Prepare analysis files**:
+   Create `artifact/analysis/` directory and place your Ruff and Semgrep JSON output files there:
+   ```bash
+   mkdir -p artifact/analysis
+   # Copy your ruff and semgrep JSON files to artifact/analysis/
+   ```
+
+3. **Run the bot**:
+   ```bash
+   python -m patchpro_bot.agent_core
+   ```
+
+   Or use the test pipeline:
+   ```bash
+   python test_pipeline.py
+   ```
+
+### Programmatic Usage
+
+```python
+from patchpro_bot import AgentCore, AgentConfig
+from pathlib import Path
+
+# Configure the agent
+config = AgentConfig(
+    analysis_dir=Path("artifact/analysis"),
+    artifact_dir=Path("artifact"),
+    openai_api_key="your-api-key",
+    max_findings=20,
+)
+
+# Create and run the agent
+agent = AgentCore(config)
+results = agent.run()
+
+print(f"Status: {results['status']}")
+print(f"Generated {results['patches_written']} patches")
+```
+
+### Testing with Sample Data
+
+The project includes sample data for testing:
+
+```bash
+# Copy sample analysis files
+cp tests/sample_data/*.json artifact/analysis/
+
+# Copy sample source file
+cp tests/sample_data/example.py src/
+
+# Run the test pipeline
+python test_pipeline.py
+```
+
+## Configuration
+
+The `AgentConfig` class supports the following options:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `analysis_dir` | `artifact/analysis` | Directory containing JSON analysis files |
+| `artifact_dir` | `artifact` | Output directory for patches and reports |
+| `base_dir` | Current directory | Base directory for source files |
+| `openai_api_key` | `None` | OpenAI API key (can also use `OPENAI_API_KEY` env var) |
+| `llm_model` | `gpt-4o-mini` | OpenAI model to use |
+| `max_tokens` | `4096` | Maximum tokens for LLM response |
+| `temperature` | `0.1` | LLM temperature (0.0 = deterministic) |
+| `max_findings` | `20` | Maximum findings to process |
+| `max_files_per_batch` | `5` | Maximum files to process in one batch |
+| `combine_patches` | `True` | Whether to create a combined patch file |
+| `generate_summary` | `True` | Whether to generate patch summaries |
+
+## Analysis File Formats
+
+### Ruff JSON Format
+
+```json
+[
+  {
+    "code": "F401",
+    "filename": "src/example.py",
+    "location": {"row": 1, "column": 8},
+    "end_location": {"row": 1, "column": 11},
+    "message": "`sys` imported but unused",
+    "fix": {
+      "applicability": "automatic",
+      "edits": [{"content": "", "location": {"row": 1, "column": 1}}]
+    }
+  }
+]
+```
+
+### Semgrep JSON Format
+
+```json
+{
+  "results": [
+    {
+      "check_id": "python.lang.security.hardcoded-password.hardcoded-password",
+      "path": "src/auth.py",
+      "start": {"start": {"line": 12, "col": 13}},
+      "end": {"end": {"line": 12, "col": 35}},
+      "extra": {
+        "message": "Hardcoded password found",
+        "severity": "ERROR",
+        "metadata": {"category": "security", "confidence": "HIGH"}
+      }
+    }
+  ]
+}
+```
+
+## Output
+
+The bot generates several output files in the `artifact/` directory:
+
+- `patch_001.diff`, `patch_002.diff`, etc. - Individual patch files
+- `combined_patch.diff` - Combined patch file (if enabled)
+- `patch_summary.md` - Summary of all generated patches
+- `report.md` - Comprehensive analysis report
+
+## Testing
+
+Run the test suite:
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=src/patchpro_bot
+
+# Run specific test modules
+pytest tests/test_analysis.py
+pytest tests/test_models.py
+pytest tests/test_llm.py
+pytest tests/test_diff.py
+```
+
+## Development
+
+### Code Quality
+
+The project uses several tools for code quality:
+
+```bash
+# Format code
+black src/ tests/
+
+# Type checking
+mypy src/
+
+# Linting
+ruff check src/ tests/
+```
+
+### Adding New Analysis Tools
+
+To add support for new analysis tools:
+
+1. Create a new model in `src/patchpro_bot/models/`
+2. Update the `AnalysisReader` to detect and parse the new format
+3. Add tests for the new functionality
+
+### Extending LLM Capabilities
+
+The LLM integration is modular and can be extended:
+
+- Add new prompt templates in `prompts.py`
+- Extend response parsing in `response_parser.py`
+- Add support for different LLM providers in `client.py`
+
+## Dependencies
+
+### Core Dependencies
+- `pydantic` - Data validation and parsing
+- `openai` - OpenAI API client
+- `unidiff` - Unified diff processing
+- `python-dotenv` - Environment variable management
+- `typer` - CLI framework
+- `rich` - Rich text and beautiful formatting
+- `httpx` - HTTP client
+
+### Analysis Tools (External)
+- `ruff` - Python linter
+- `semgrep` - Static analysis tool
+
+### Development Dependencies
+- `pytest` - Testing framework
+- `pytest-cov` - Coverage reporting
+- `pytest-asyncio` - Async testing support
+- `black` - Code formatting
+- `mypy` - Type checking
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new functionality
+5. Run the test suite
+6. Submit a pull request
+
+## License
+
+MIT License - see LICENSE file for details. - An intelligent patch bot that analyzes static analysis reports from Ruff and Semgrep and generates unified diff patches using LLM-powered suggestions.
+
+## 🎯 Overview
+
+PatchPro Bot follows the pipeline described in your mermaid diagram:
+
+```
+Analysis JSON → Agent Core → LLM Suggestions → Unified Diff Generation → Patch Files
+```
+
+The bot reads JSON reports from static analysis tools (Ruff for Python linting, Semgrep for security/pattern analysis), sends the findings to an LLM for intelligent code suggestions, and generates properly formatted unified diff patches.
+
+## 🏗️ Architecture
+
+### Core Components
+
+- **📋 Analysis Module** (`src/patchpro_bot/analysis/`)
+  - `AnalysisReader`: Reads and parses JSON files from `artifact/analysis/`
+  - `FindingAggregator`: Processes, filters, and organizes findings for LLM consumption
+
+- **🧠 LLM Module** (`src/patchpro_bot/llm/`)
+  - `LLMClient`: OpenAI integration for generating code suggestions
+  - `PromptBuilder`: Creates structured prompts for different fix scenarios
+  - `ResponseParser`: Extracts code fixes and diffs from LLM responses
+
+- **🔧 Diff Module** (`src/patchpro_bot/diff/`)
+  - `DiffGenerator`: Creates unified diffs from code changes
+  - `FileReader`: Reads source code files for diff generation
+  - `PatchWriter`: Writes patch files to the artifact directory
+
+- **🎛️ Agent Core** (`src/patchpro_bot/agent_core.py`)
+  - Orchestrates the entire pipeline from analysis to patch generation
+  - Configurable processing limits and output options
+
+- **📊 Models** (`src/patchpro_bot/models/`)
+  - Pydantic models for Ruff and Semgrep JSON schemas
+  - Unified `AnalysisFinding` model for cross-tool compatibility
+
+## 🚀 Quick Start
+
+### Installation
+
+1. Clone the repository and install dependencies:
+```bash
+cd patchpro-bot
+pip install -e .
+```
+
+2. Install optional development dependencies:
+```bash
+pip install -e ".[dev]"
+```
+
+### Basic Usage
+
+1. **Set up your OpenAI API key:**
+```bash
+export OPENAI_API_KEY="your-api-key-here"
+```
+
+2. **Prepare analysis data:**
+Place your Ruff and Semgrep JSON outputs in `artifact/analysis/`:
+```bash
+mkdir -p artifact/analysis
+ruff check --format=json examples/src/ > artifact/analysis/ruff_output.json
+semgrep --config=auto --json examples/src/ > artifact/analysis/semgrep_output.json
+```
+
+3. **Run the bot:**
+```bash
+python -m patchpro_bot.agent_core
+```
+
+4. **Check the results:**
+- Patch files: `artifact/patch_*.diff`
+- Report: `artifact/report.md`
+
+### Using the API
+
+```python
+from patchpro_bot import AgentCore, AgentConfig
+
+# Configure the agent
+config = AgentConfig(
+    analysis_dir=Path("artifact/analysis"),
+    openai_api_key="your-api-key",
+    max_findings=10
+)
+
+# Run the pipeline
+agent = AgentCore(config)
+results = agent.run()
+
+print(f"Generated {results['patches_written']} patches")
+```
+
+## 📁 Project Structure
+
+```
+patchpro-bot/
+├── src/patchpro_bot/
+│   ├── __init__.py           # Package exports
+│   ├── agent_core.py         # Main orchestrator
+│   ├── run_ci.py            # Legacy CI runner
+│   ├── analysis/            # Analysis reading & processing
+│   │   ├── reader.py        # JSON file reader
+│   │   └── aggregator.py    # Finding aggregation
+│   ├── llm/                 # LLM integration
+│   │   ├── client.py        # OpenAI client
+│   │   ├── prompts.py       # Prompt templates
+│   │   └── response_parser.py # Response parsing
+│   ├── diff/                # Diff generation
+│   │   ├── generator.py     # Unified diff creation
+│   │   ├── file_reader.py   # Source file reading
+│   │   └── patch_writer.py  # Patch file writing
+│   └── models/              # Data models
+│       ├── common.py        # Common types
+│       ├── ruff.py         # Ruff JSON schema
+│       └── semgrep.py      # Semgrep JSON schema
+├── tests/                   # Comprehensive test suite
+├── examples/               # Sample data and usage
+└── docs/                   # Documentation
+```
+
+## 🔧 Configuration
+
+### Environment Variables
+
+- `OPENAI_API_KEY`: Your OpenAI API key (required)
+- `LLM_MODEL`: Model to use (default: `gpt-4o-mini`)
+- `MAX_FINDINGS`: Maximum findings to process (default: `20`)
+- `PP_ARTIFACTS`: Artifact directory path (default: `artifact`)
+
+### AgentConfig Options
+
+```python
+config = AgentConfig(
+    # Directories
+    analysis_dir=Path("artifact/analysis"),
+    artifact_dir=Path("artifact"),
+    base_dir=Path.cwd(),
+    
+    # LLM settings
+    openai_api_key="your-key",
+    llm_model="gpt-4o-mini",
+    max_tokens=4096,
+    temperature=0.1,
+    
+    # Processing limits
+    max_findings=20,
+    max_files_per_batch=5,
+    
+    # Output settings
+    combine_patches=True,
+    generate_summary=True
+)
+```
+
+## 📝 Supported Analysis Tools
+
+### Ruff (Python Linter)
+- **Supported**: All Ruff rule categories (F, E, W, C, N, D, S, B, etc.)
+- **Features**: Automatic fix extraction, severity inference, rule categorization
+- **Format**: JSON output from `ruff check --format=json`
+
+### Semgrep (Security & Pattern Analysis)  
+- **Supported**: All Semgrep rule types and severities
+- **Features**: Security vulnerability detection, metadata extraction
+- **Format**: JSON output from `semgrep --json`
+
+## 🧪 Testing
+
+Run the comprehensive test suite:
+
+```bash
+# Install test dependencies
+pip install -e ".[dev]"
+
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=patchpro_bot
+
+# Run specific test modules
+pytest tests/test_analysis.py
+pytest tests/test_llm.py
+pytest tests/test_diff.py
+```
+
+## 📊 Example Output
+
+### Generated Patch
+```diff
+diff --git a/src/example.py b/src/example.py
+index 1234567..abcdefg 100644
+--- a/src/example.py
++++ b/src/example.py
+@@ -1,5 +1,4 @@
+-import os
+ import sys
+ import subprocess
+ 
+ def main():
+```
+
+### Report Summary
+```markdown
+# PatchPro Bot Report
+
+## Summary
+- **Total findings**: 6
+- **Tools used**: ruff, semgrep  
+- **Affected files**: 2
+- **Patches generated**: 3
+
+## Findings Breakdown
+- **error**: 3
+- **warning**: 2  
+- **high**: 1
+```
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Add tests for your changes
+4. Ensure tests pass (`pytest`)
+5. Commit your changes (`git commit -m 'Add amazing feature'`)
+6. Push to the branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
+
+## 📋 Requirements
+
+- Python 3.12+
+- OpenAI API key
+- Dependencies listed in `pyproject.toml`
+
+## 🔒 Security
+
+- API keys are loaded from environment variables
+- No sensitive data is logged
+- Minimal, targeted code changes to reduce risk
+- Security-first prioritization in fix suggestions
+
+## 📜 License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+- 📖 Check the [examples/](examples/) directory for usage samples
+- 🐛 Report issues on GitHub
+- 💬 Review the comprehensive test suite for API usage examples
+
+---
+
+**PatchPro Bot** - Intelligent code repair for modern CI/CD pipelines with professional finding normalization 🚀
