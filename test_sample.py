@@ -56,4 +56,4 @@ if __name__ == "__main__":
     eval(code)
     
     # Assert in production code
-    assert True, "This should not be in production"
+    assert True, "This should not be in production"# Test path normalization

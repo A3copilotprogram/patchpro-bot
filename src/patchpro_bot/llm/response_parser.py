@@ -206,6 +206,11 @@ class ResponseParser:
                             diff_content=patch_data.get("diff_content", ""),
                             summary=patch_data.get("summary", None),
                         )
+                        # DEBUG: Log what LLM returned
+                        logger.warning(f"DEBUG: LLM returned - file_path={patch.file_path}")
+                        if "diff --git" in patch.diff_content[:100]:
+                            diff_header = patch.diff_content.split('\n')[0]
+                            logger.warning(f"DEBUG: LLM returned - diff header={diff_header}")
                         patches.append(patch)
                         logger.debug(f"Parsed diff patch for {patch.file_path}")
                     except Exception as e:
