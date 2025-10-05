@@ -2,9 +2,11 @@
 
 import logging
 from typing import List, Optional, Dict
+from pathlib import Path
 
 from ..analysis import FindingAggregator
 from ..models import AnalysisFinding
+from ..context_reader import FindingContextReader
 
 
 logger = logging.getLogger(__name__)
@@ -190,6 +192,9 @@ Files to fix:
         for file_path, findings in file_fixes.items():
             content = file_contents.get(file_path, "")
             
+            # DEBUG: Log the file path being sent to LLM
+            logger.warning(f"DEBUG: Sending to LLM - file_path={file_path}")
+            
             prompt += f"""
 ## File: `{file_path}`
 
@@ -239,29 +244,148 @@ Return only valid JSON, no additional text or formatting.
         
         return prompt
     
+    def build_unified_diff_prompt_with_context(
+        self,
+        file_fixes: Dict[str, List[AnalysisFinding]],
+        repo_path: str,
+    ) -> str:
+        """Build prompt using real file context for unified diff generation.
+        
+        Uses FindingContextReader to get actual code around findings.
+        This is the NEW golden approach that prevents LLM hallucination.
+        
+        Args:
+            file_fixes: Dictionary mapping file paths to their findings
+            repo_path: Path to git repository root
+            
+        Returns:
+            Formatted prompt string
+        """
+        context_reader = FindingContextReader(context_lines=5)
+        
+        prompt = """I need you to generate unified diff patches for code issues found by static analysis.
+
+IMPORTANT INSTRUCTIONS:
+1. You will receive ACTUAL file content with line numbers
+2. The problematic lines are marked with → arrows
+3. Generate standard unified diff format (diff --git, ---, +++, @@)
+4. Use EXACTLY the line numbers and content shown below
+5. Make minimal, focused changes to fix the issues
+6. Preserve indentation, spacing, and style
+
+Files to fix:
+"""
+        
+        for file_path, findings in file_fixes.items():
+            prompt += f"\n## File: `{file_path}`\n\n**Issues found**:\n"
+            
+            for i, finding in enumerate(findings, 1):
+                prompt += f"{i}. **{finding.rule_id}** at line {finding.location.line}\n"
+                prompt += f"   - {finding.message}\n"
+                if finding.suggested_fix:
+                    prompt += f"   - Suggested fix: {finding.suggested_fix}\n"
+            
+            # Get real code context for each finding
+            prompt += "\n**Actual Code Context** (→ marks problematic lines):\n```python\n"
+            
+            # Get unique line ranges to avoid duplicates
+            line_ranges = set()
+            for finding in findings:
+                start_line = finding.location.line
+                end_line = finding.location.end_line or start_line
+                line_ranges.add((start_line, end_line))
+            
+            # Get context for each range
+            contexts = []
+            for start, end in sorted(line_ranges):
+                full_path = Path(repo_path) / file_path
+                context = context_reader.get_code_context(str(full_path), start, end)
+                if context:
+                    contexts.append(context)
+            
+            # Combine contexts
+            if contexts:
+                prompt += "\n\n".join(contexts)
+            else:
+                # Fallback: show full file if context extraction fails
+                try:
+                    full_path = Path(repo_path) / file_path
+                    full_content = context_reader.get_full_file_content(str(full_path))
+                    if full_content:
+                        prompt += full_content
+                except Exception as e:
+                    logger.error(f"Failed to read {file_path}: {e}")
+                    prompt += f"# ERROR: Could not read file content\n"
+            
+            prompt += "\n```\n\n---\n"
+        
+        prompt += """
+Please generate unified diff patches for each file. Return your response as valid JSON:
+
+{
+  "patches": [
+    {
+      "file_path": "relative/path/to/file.py",
+      "diff_content": "diff --git a/file.py b/file.py\\nindex abc123..def456 100644\\n--- a/file.py\\n+++ b/file.py\\n@@ -10,7 +10,7 @@\\n context line\\n-old line\\n+new line\\n context line",
+      "summary": "Fix: Brief description of what was changed"
+    }
+  ]
+}
+
+UNIFIED DIFF FORMAT REQUIREMENTS:
+- Start with: diff --git a/{file} b/{file}
+- Include: --- a/{file} and +++ b/{file}
+- Hunk header: @@ -old_start,old_count +new_start,new_count @@
+- Include 3-5 context lines before and after changes
+- Use - for removed lines, + for added lines
+- Space prefix for context lines
+
+CRITICAL: 
+- Use the EXACT line numbers shown in the code context above
+- Match indentation and spacing exactly
+- Make minimal changes - only fix the reported issues
+- Ensure patches can be applied with `git apply`
+
+Return ONLY valid JSON, no additional text."""
+        
+        return prompt
+    
     def get_system_prompt(self) -> str:
         """Get the system prompt for LLM interactions.
         
         Returns:
             System prompt string
         """
-        return """You are an expert Python developer and code reviewer specializing in static analysis tool outputs and code fixes.
+        return """You are an expert Python developer and code reviewer specializing in generating unified diff patches.
 
 Your expertise includes:
 - Understanding Ruff (Python linter) and Semgrep (static analysis) outputs
-- Generating precise, minimal code fixes
-- Creating proper unified diff patches
+- Generating precise, minimal unified diff patches
+- Following standard unified diff format (diff -u)
+- Using exact line numbers and code from provided context
 - Following Python best practices and PEP standards
 - Security-aware coding practices
 
-Guidelines:
-1. Always prioritize security fixes over style issues
-2. Make minimal changes that address specific issues
-3. Preserve existing code style and patterns
-4. Provide clear explanations for changes
-5. Generate valid unified diff format
-6. Focus on the most impactful fixes first
+CRITICAL GUIDELINES:
+1. Always use EXACT code from the provided file context - never hallucinate or guess
+2. Generate proper unified diff format with ---, +++, and @@ headers
+3. Include 3-5 context lines before and after changes
+4. Make minimal changes that address only the specific issues
+5. Preserve existing code style, indentation, and formatting
+6. Always prioritize security fixes over style issues
 7. Always respond with valid JSON format as requested
 8. Never include additional text outside the requested JSON structure
+
+UNIFIED DIFF FORMAT:
+```
+diff --git a/file.py b/file.py
+--- a/file.py
++++ b/file.py
+@@ -line_num,count +line_num,count @@
+ context line
+-removed line
++added line
+ context line
+```
 
 Be precise, thorough, and security-conscious in your responses. Always return properly formatted JSON."""

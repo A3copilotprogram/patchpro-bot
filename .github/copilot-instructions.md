@@ -338,6 +338,66 @@ issue    in GH      commit     opened     merged   closed
 4. **Close promptly** - don't leave zombie issues
 5. **Reference liberally** - over-linking is better than under-linking
 
+## Shell Environment Guidelines
+
+### Fish Shell Compatibility
+
+This project uses **Fish shell** as the default shell. All terminal commands must be Fish-compatible.
+
+**Key Differences from Bash:**
+- ❌ **No heredocs**: Fish doesn't support `<<EOF` syntax
+- ❌ **Different logic**: Use `and`/`or` instead of `&&`/`||`
+- ❌ **Different variables**: Use `set` instead of `export`
+
+**CRITICAL: Always Use Scripts for Complex/Multi-line Commands**
+
+**❌ NEVER do this in terminal directly:**
+```fish
+# WRONG - Complex command inline
+gh issue create --title "..." --body "..." --label "..."
+```
+
+**✅ ALWAYS create a script file:**
+```fish
+# CORRECT - Create script first
+create_file /tmp/script.sh "#!/bin/bash\ncommand..."
+chmod +x /tmp/script.sh
+/tmp/script.sh
+```
+
+**When to use scripts:**
+- Any command > 80 characters
+- Commands with multi-line arguments
+- Commands with special characters (quotes, parentheses, etc.)
+- GitHub CLI commands (gh issue, gh pr, etc.)
+- Any command that would use heredocs in bash
+
+**Use printf for Simple Inline Scripts:**
+
+```fish
+# ✅ For simple one-liners only
+printf 'import json\nprint("test")\n' | python3
+```
+
+**Chain Commands:**
+
+```fish
+# ✅ CORRECT - Fish shell
+command1; and command2
+
+# ❌ WRONG - Bash syntax
+command1 && command2
+```
+
+### For GitHub Copilot
+
+When generating terminal commands:
+1. **Always use Fish shell syntax**
+2. **Use temp files** (`/tmp/*.py`, `/tmp/*.sh`) for multi-line scripts
+3. **Test commands** are Fish-compatible before suggesting
+4. **Avoid heredocs** - use `cat > file` instead
+5. **Use `;` or `; and`** for command chaining, not `&&`
+
 ## Questions?
 
 If unclear about:
@@ -345,9 +405,10 @@ If unclear about:
 - How to scope an issue → Ask team lead
 - How to reference issues → Follow examples in this doc
 - Issue numbering → Follow S{sprint}-{component}-{number} format
+- Shell syntax → Use Fish shell, not Bash
 
 ---
 
-**Last Updated**: 2025-10-04  
+**Last Updated**: 2025-10-05  
 **Maintained By**: Team PLG_5  
 **Questions**: Ask in #patchpro-dev channel
