@@ -1,13 +1,5 @@
 """
 Analyzer module for normalizing static analysis findings from Ruff, Semgrep and other tools.
-
-This module provides normalization of findings from multiple static analysis tools
-into a unified schema, with proper path normalization relative to git root.
-
-Key features:
-- Normalizes findings from ruff and semgrep
-- Converts absolute paths to relative paths from git root
-- Provides unified Finding schema for downstream processing
 """
 import json
 import hashlib
@@ -19,7 +11,7 @@ from enum import Enum
 
 
 class Severity(Enum):
-    """Normalized severity levels for findings across all tools."""
+    """Normalized severity levels."""
     ERROR = "error"
     WARNING = "warning"
     INFO = "info"
@@ -229,77 +221,6 @@ class RuffNormalizer:
         "RUF": Category.STYLE.value,  # Ruff-specific rules
     }
 
-    def _normalize_file_path(self, file_path: str) -> str:
-        """Normalize file path to be relative to git root.
-        
-        Args:
-            file_path: Absolute or relative file path
-            
-        Returns:
-            Path relative to git root
-        """
-        import subprocess
-        import os
-        
-        # DEBUG: Log to file for async debugging
-        with open("/tmp/patchpro_debug.log", "a") as f:
-            f.write(f"[RuffNormalizer-{os.getpid()}] INPUT: {file_path}\n")
-            f.write(f"[RuffNormalizer-{os.getpid()}] CWD: {os.getcwd()}\n")
-        
-        # If already relative, return as-is
-        path_obj = Path(file_path)
-        if not path_obj.is_absolute():
-            with open("/tmp/patchpro_debug.log", "a") as f:
-                f.write(f"[RuffNormalizer-{os.getpid()}] Already relative, returning: {file_path}\n")
-            return file_path
-        
-        # Find git root
-        try:
-            # Try from the file's directory
-            file_dir = path_obj.parent if path_obj.is_file() else path_obj
-            with open("/tmp/patchpro_debug.log", "a") as f:
-                f.write(f"[RuffNormalizer-{os.getpid()}] file_dir for git command: {file_dir}\n")
-            
-            result = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                cwd=file_dir,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            git_root_str = result.stdout.strip()
-            git_root = Path(git_root_str)
-            
-            with open("/tmp/patchpro_debug.log", "a") as f:
-                f.write(f"[RuffNormalizer-{os.getpid()}] git stdout: '{result.stdout}'\n")
-                f.write(f"[RuffNormalizer-{os.getpid()}] git stdout stripped: '{git_root_str}'\n")
-                f.write(f"[RuffNormalizer-{os.getpid()}] git root Path object: '{git_root}'\n")
-            
-            # Make relative to git root
-            try:
-                resolved_path = path_obj.resolve()
-                with open("/tmp/patchpro_debug.log", "a") as f:
-                    f.write(f"[RuffNormalizer-{os.getpid()}] RESOLVED PATH: {resolved_path}\n")
-                    f.write(f"[RuffNormalizer-{os.getpid()}] GIT ROOT: {git_root}\n")
-                    f.write(f"[RuffNormalizer-{os.getpid()}] IS RESOLVED UNDER GIT ROOT? {resolved_path.is_relative_to(git_root) if hasattr(resolved_path, 'is_relative_to') else 'N/A'}\n")
-                
-                rel_path = resolved_path.relative_to(git_root)
-                with open("/tmp/patchpro_debug.log", "a") as f:
-                    f.write(f"[RuffNormalizer-{os.getpid()}] OUTPUT: {rel_path}\n")
-                return str(rel_path)
-            except ValueError:
-                # Path not under git root, strip leading slash
-                result_path = str(path_obj).lstrip('/')
-                with open("/tmp/patchpro_debug.log", "a") as f:
-                    f.write(f"[RuffNormalizer-{os.getpid()}] Outside git root, returning: {result_path}\n")
-                return result_path
-        except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            # Not in git repo or git not available, strip leading slash
-            result_path = str(path_obj).lstrip('/')
-            with open("/tmp/patchpro_debug.log", "a") as f:
-                f.write(f"[RuffNormalizer-{os.getpid()}] Git error: {e}, returning: {result_path}\n")
-            return result_path
-
     def normalize(self, ruff_output: Union[str, Dict, List]) -> NormalizedFindings:
         """Normalize Ruff JSON output."""
         if isinstance(ruff_output, str):
@@ -335,9 +256,9 @@ class RuffNormalizer:
             severity = self.SEVERITY_MAP.get(rule_prefix, Severity.WARNING.value)
             category = self.CATEGORY_MAP.get(rule_prefix, Category.CORRECTNESS.value)
 
-            # Create location with normalized file path
+            # Create location
             location = Location(
-                file=self._normalize_file_path(ruff_finding["filename"]),
+                file=ruff_finding["filename"],
                 line=ruff_finding["location"]["row"],
                 column=ruff_finding["location"]["column"],
                 end_line=ruff_finding["end_location"]["row"] if ruff_finding.get("end_location") else None,
@@ -411,46 +332,6 @@ class SemgrepNormalizer:
         "LOW": Severity.INFO.value,
     }
 
-    def _normalize_file_path(self, file_path: str) -> str:
-        """Normalize file path to be relative to git root.
-        
-        Args:
-            file_path: Absolute or relative file path
-            
-        Returns:
-            Path relative to git root
-        """
-        import subprocess
-        
-        # If already relative, return as-is
-        path_obj = Path(file_path)
-        if not path_obj.is_absolute():
-            return file_path
-        
-        # Find git root
-        try:
-            # Try from the file's directory
-            file_dir = path_obj.parent if path_obj.is_file() else path_obj
-            result = subprocess.run(
-                ["git", "rev-parse", "--show-toplevel"],
-                cwd=file_dir,
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            git_root = Path(result.stdout.strip())
-            
-            # Make relative to git root
-            try:
-                rel_path = path_obj.resolve().relative_to(git_root)
-                return str(rel_path)
-            except ValueError:
-                # Path not under git root, strip leading slash
-                return str(path_obj).lstrip('/')
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            # Not in git repo or git not available, strip leading slash
-            return str(path_obj).lstrip('/')
-
     def normalize(self, semgrep_output: Union[str, Dict]) -> NormalizedFindings:
         """Normalize Semgrep JSON output."""
         if isinstance(semgrep_output, str):
@@ -489,12 +370,12 @@ class SemgrepNormalizer:
             # Determine category based on rule ID patterns
             category = self._determine_category(check_id)
 
-            # Create location with normalized file path
+            # Create location
             start_pos = semgrep_finding.get("start", {})
             end_pos = semgrep_finding.get("end", {})
             
             location = Location(
-                file=self._normalize_file_path(semgrep_finding.get("path", "")),
+                file=semgrep_finding.get("path", ""),
                 line=start_pos.get("line", 1),
                 column=start_pos.get("col", 1),
                 end_line=end_pos.get("line"),

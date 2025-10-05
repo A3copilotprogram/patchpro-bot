@@ -172,7 +172,9 @@ class DiffGenerator:
         
         # Get relative path from git root (ALWAYS normalize paths!)
         file_path = diff_patch.file_path
+        logger.warning(f"DEBUG: generate_diff_from_patch input file_path={file_path}")
         relative_path = self._make_relative_path(file_path)
+        logger.warning(f"DEBUG: generate_diff_from_patch normalized to relative_path={relative_path}")
         
         # Validate and potentially clean up the diff
         if not diff_content.startswith('diff --git'):
@@ -229,6 +231,7 @@ index 0000000..1111111 100644
         
         # Generate diff for each file
         for file_path, file_fixes in fixes_by_file.items():
+            logger.warning(f"DEBUG: generate_multiple_diffs processing file_path={file_path}")
             try:
                 # Read original content once per file
                 original_content = self.file_reader.read_file(file_path)
@@ -259,6 +262,8 @@ index 0000000..1111111 100644
                     )
                     # NOTE: Do NOT normalize whitespace - spaces are meaningful in diff format!
                     # diff = self.normalize_diff_whitespace(diff)
+                    header_line = diff.split('\n')[0] if diff else "NO CONTENT"
+                    logger.warning(f"DEBUG: generate_multiple_diffs created diff with header={header_line}")
                     diffs[file_path] = diff
                     logger.info(f"Generated diff for {file_path} with {len(file_fixes)} fixes")
                 
@@ -639,7 +644,9 @@ index 0000000..1111111 100644
         
         # Convert to relative path from git root
         # Git diffs use relative paths: a/path/to/file
+        logger.warning(f"DEBUG: _generate_unified_diff input file_path={file_path}")
         relative_path = self._make_relative_path(file_path)
+        logger.warning(f"DEBUG: _generate_unified_diff normalized to relative_path={relative_path}")
         
         # Generate unified diff
         diff_lines = list(difflib.unified_diff(
