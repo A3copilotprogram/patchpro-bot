@@ -117,7 +117,7 @@ class AgenticPatchGenerator(AgenticCore):
         for finding in findings:
             # Agent decides strategy and executes with retry
             result = await self.achieve_goal(
-                goal=f"Generate valid patch for {finding.check_id} in {finding.location.path}",
+                goal=f"Generate valid patch for {finding.rule_id} in {finding.location.file}",
                 context={
                     'finding': finding,
                     'repo_path': str(self.repo_path)
@@ -127,10 +127,10 @@ class AgenticPatchGenerator(AgenticCore):
             if result['success']:
                 patches.append(result['result']['patch'])
                 successes += 1
-                logger.info(f"✓ Generated patch for {finding.check_id}")
+                logger.info(f"✓ Generated patch for {finding.rule_id}")
             else:
                 failures += 1
-                logger.warning(f"✗ Failed to generate patch for {finding.check_id}")
+                logger.warning(f"✗ Failed to generate patch for {finding.rule_id}")
         
         return {
             'patches': patches,
@@ -272,7 +272,7 @@ class AgenticPatchGenerator(AgenticCore):
             context = self.context_reader.get_code_context(finding, context_lines=5)
             
             # Build prompt
-            prompt = self.prompt_builder.build_user_prompt([finding], {finding.location.path: context})
+            prompt = self.prompt_builder.build_user_prompt([finding], {finding.location.file: context})
             system_prompt = self.prompt_builder.build_system_prompt()
             
             # Call LLM
@@ -306,7 +306,7 @@ class AgenticPatchGenerator(AgenticCore):
             context = self.context_reader.get_code_context(finding, context_lines=context_lines)
             
             # Build prompt with emphasis on context
-            prompt = self.prompt_builder.build_user_prompt([finding], {finding.location.path: context})
+            prompt = self.prompt_builder.build_user_prompt([finding], {finding.location.file: context})
             system_prompt = self.prompt_builder.build_system_prompt()
             
             # Call LLM
@@ -340,7 +340,7 @@ class AgenticPatchGenerator(AgenticCore):
             # Group by file
             findings_by_file = {}
             for finding in findings:
-                path = finding.location.path
+                path = finding.location.file
                 if path not in findings_by_file:
                     findings_by_file[path] = []
                 findings_by_file[path].append(finding)

@@ -61,6 +61,29 @@ async def run_comparison_test(findings_count: int = 10):
     test_findings = data['findings'][:findings_count]
     print(f"✓ Loaded {len(test_findings)} findings for testing\n")
     
+    # Save findings to artifact directory for agent to load
+    artifact_dir = test_repo / "artifact" / "analysis"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Create separate files for ruff and semgrep findings
+    # Group findings by tool
+    ruff_findings = [f for f in test_findings if f.get('source_tool') == 'ruff']
+    semgrep_findings = [f for f in test_findings if f.get('source_tool') == 'semgrep']
+    
+    # Write ruff findings
+    if ruff_findings:
+        ruff_file = artifact_dir / "ruff_output.json"
+        with open(ruff_file, 'w') as f:
+            json.dump(ruff_findings, f, indent=2)
+    
+    # Write semgrep findings
+    if semgrep_findings:
+        semgrep_file = artifact_dir / "semgrep_output.json"
+        with open(semgrep_file, 'w') as f:
+            json.dump({'results': semgrep_findings}, f, indent=2)
+    
+    print(f"✓ Prepared findings for agent in {artifact_dir}\n")
+    
     # Results storage
     results = {}
     
