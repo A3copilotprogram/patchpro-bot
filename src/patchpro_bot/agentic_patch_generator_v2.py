@@ -23,6 +23,7 @@ from patchpro_bot.llm.response_parser import DiffPatch, ResponseParser, Response
 from patchpro_bot.context_reader import FindingContextReader
 from patchpro_bot.llm.prompts import PromptBuilder
 from patchpro_bot.validators import DiffValidator
+from patchpro_bot.telemetry import PatchTracer
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +47,18 @@ class AgenticPatchGeneratorV2(AgenticCore):
         llm_client,
         repo_path: Path,
         max_retries: int = 3,
-        enable_planning: bool = True
+        enable_planning: bool = True,
+        enable_tracing: bool = True
     ):
-        """Initialize the agentic patch generator."""
+        """Initialize the agentic patch generator.
+        
+        Args:
+            llm_client: LLM client for generation
+            repo_path: Path to repository
+            max_retries: Maximum retry attempts
+            enable_planning: Enable planning mode
+            enable_tracing: Enable telemetry/trace logging
+        """
         super().__init__(llm_client, max_retries, enable_planning)
         
         self.repo_path = repo_path
@@ -57,10 +67,17 @@ class AgenticPatchGeneratorV2(AgenticCore):
         self.response_parser = ResponseParser()
         self.validator = DiffValidator()
         
+        # Telemetry
+        self.enable_tracing = enable_tracing
+        self.tracer = PatchTracer(trace_dir=repo_path / ".patchpro" / "traces") if enable_tracing else None
+        
         # Register specialized tools
         self._register_patch_tools()
         
-        logger.info(f"Initialized AgenticPatchGeneratorV2 for {repo_path}")
+        if enable_tracing:
+            logger.info(f"Initialized AgenticPatchGeneratorV2 for {repo_path} (tracing ENABLED)")
+        else:
+            logger.info(f"Initialized AgenticPatchGeneratorV2 for {repo_path} (tracing DISABLED)")
     
     def _register_patch_tools(self):
         """Register patch generation tools."""
@@ -244,11 +261,59 @@ class AgenticPatchGeneratorV2(AgenticCore):
         
         This is the 100% success rate strategy.
         """
+        import time
+        
         try:
             # Extract finding from context
             finding = context.get('finding')
             if not finding:
                 return {'success': False, 'error': 'Missing finding in context'}
+            
+            # Start tracing if enabled
+            retry_attempt = context.get('attempt_number', 1)
+            previous_errors = context.get('previous_errors', [])
+            
+            # Use context manager properly
+            if self.enable_tracing and self.tracer:
+                with self.tracer.trace_patch_generation(
+                    finding=finding,
+                    strategy="generate_single_patch",
+                    retry_attempt=retry_attempt,
+                    previous_errors=previous_errors
+                ) as trace_ctx:
+                    return await self._generate_single_patch_with_tracing(
+                        finding=finding,
+                        context=context,
+                        retry_attempt=retry_attempt,
+                        previous_errors=previous_errors,
+                        trace_ctx=trace_ctx
+                    )
+            else:
+                # No tracing - just generate
+                return await self._generate_single_patch_with_tracing(
+                    finding=finding,
+                    context=context,
+                    retry_attempt=retry_attempt,
+                    previous_errors=previous_errors,
+                    trace_ctx=None
+                )
+                
+        except Exception as e:
+            logger.error(f"Single patch generation failed: {e}", exc_info=True)
+            return {'success': False, 'error': str(e)}
+    
+    async def _generate_single_patch_with_tracing(
+        self,
+        finding: AnalysisFinding,
+        context: Dict[str, Any],
+        retry_attempt: int,
+        previous_errors: List[str],
+        trace_ctx: Optional[Any]
+    ) -> Dict[str, Any]:
+        """Internal method that does the actual patch generation with optional tracing."""
+        import time
+        
+        try:
             
             # Group into file_fixes format that PromptBuilder expects
             file_fixes = {finding.location.file: [finding]}
@@ -260,9 +325,9 @@ class AgenticPatchGeneratorV2(AgenticCore):
             )
             
             # Add previous error feedback to prompt if available (agentic self-correction)
-            if 'previous_errors' in context:
-                attempt = context.get('attempt_number', 2)
-                error_text = '\n'.join(f"  - {err}" for err in context['previous_errors'])
+            if previous_errors:
+                attempt = retry_attempt
+                error_text = '\n'.join(f"  - {err}" for err in previous_errors)
                 feedback_prompt = f"""
 IMPORTANT: Previous attempt #{attempt-1} failed validation with these errors:
 {error_text}
@@ -277,12 +342,36 @@ Generate a corrected patch that will pass git apply validation.
 """
                 prompt = feedback_prompt + "\n\n" + prompt
             
-            # Call LLM
+            # Record prompt in trace
+            if trace_ctx:
+                trace_ctx.set_prompt(prompt, self.prompt_builder.system_prompt)
+            
+            # Call LLM with timing
+            start_time = time.time()
             response = await self.llm_client.generate_response(
                 prompt=prompt,
                 system_prompt=self.prompt_builder.system_prompt,
                 use_json_mode=False
             )
+            latency_ms = int((time.time() - start_time) * 1000)
+            
+            # Calculate cost (gpt-4o-mini pricing: $0.15/1M input, $0.60/1M output)
+            prompt_tokens = response.usage.get('prompt_tokens', 0) if response.usage else 0
+            completion_tokens = response.usage.get('completion_tokens', 0) if response.usage else 0
+            total_tokens = prompt_tokens + completion_tokens
+            cost_usd = (prompt_tokens * 0.15 / 1_000_000) + (completion_tokens * 0.60 / 1_000_000)
+            
+            # Record LLM response in trace
+            if trace_ctx:
+                trace_ctx.set_llm_response(
+                    response=response.content,
+                    model=response.model,
+                    tokens_used=total_tokens,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    latency_ms=latency_ms,
+                    cost_usd=cost_usd
+                )
             
             # Parse with PROVEN parser from Issue #13
             parsed = self.response_parser.parse_response(
@@ -291,6 +380,9 @@ Generate a corrected patch that will pass git apply validation.
             )
             
             if not parsed.diff_patches:
+                if trace_ctx:
+                    trace_ctx.set_patch(None)
+                    trace_ctx.set_validation(False, ["No patches parsed from LLM response"])
                 return {'success': False, 'error': 'No patches parsed from LLM response'}
             
             # Validate patches with git apply and collect feedback
@@ -320,6 +412,15 @@ Generate a corrected patch that will pass git apply validation.
                     validation_feedback.append(feedback)
                     logger.warning(feedback)
             
+            # Record validation results in trace
+            if trace_ctx:
+                if valid_patches:
+                    trace_ctx.set_patch(valid_patches[0].diff_content)
+                    trace_ctx.set_validation(True, [])
+                else:
+                    trace_ctx.set_patch(parsed.diff_patches[0].diff_content if parsed.diff_patches else None)
+                    trace_ctx.set_validation(False, validation_feedback)
+            
             if not valid_patches:
                 # Return detailed feedback for agent to use in retry
                 error_detail = '; '.join(validation_feedback) if validation_feedback else 'All patches failed validation'
@@ -332,7 +433,11 @@ Generate a corrected patch that will pass git apply validation.
             return {'success': True, 'result': {'patches': valid_patches}}
             
         except Exception as e:
-            logger.error(f"Single patch generation failed: {e}", exc_info=True)
+            # Record exception in trace
+            if trace_ctx:
+                trace_ctx.set_validation(False, [str(e)])
+            
+            logger.error(f"Inner patch generation failed: {e}", exc_info=True)
             return {'success': False, 'error': str(e)}
     
     async def _generate_batch_patch(self, context: Dict[str, Any]) -> Dict[str, Any]:
