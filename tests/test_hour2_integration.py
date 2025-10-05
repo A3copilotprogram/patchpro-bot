@@ -166,6 +166,7 @@ async def test_integration_with_50_findings():
         analysis_dir=test_analysis_dir,
         artifact_dir=test_artifact_dir,
         use_unified_diff_generation=True,  # Enable new approach
+        llm_model="gpt-4o",  # OPTION C: Use smarter model
         max_findings=50,
         max_findings_per_batch=10,  # SMALLER batches for better LLM results
         max_tokens=4096,

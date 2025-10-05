@@ -326,7 +326,7 @@ Please generate unified diff patches for each file. Return your response as vali
   "patches": [
     {
       "file_path": "relative/path/to/file.py",
-      "diff_content": "diff --git a/file.py b/file.py\\nindex abc123..def456 100644\\n--- a/file.py\\n+++ b/file.py\\n@@ -10,7 +10,7 @@\\n context line\\n-old line\\n+new line\\n context line",
+      "diff_content": "diff --git a/file.py b/file.py\\n--- a/file.py\\n+++ b/file.py\\n@@ -10,7 +10,7 @@\\n context\\n-old\\n+new\\n context",
       "summary": "Fix: Brief description of what was changed"
     }
   ]
@@ -336,24 +336,63 @@ UNIFIED DIFF FORMAT REQUIREMENTS:
 - Start with: diff --git a/{file} b/{file}
 - Include: --- a/{file} and +++ b/{file}
 - Hunk header: @@ -old_start,old_count +new_start,new_count @@
-- Include 3-5 context lines before and after changes
+- Include 3-5 context lines before and after EACH change
 - Use - for removed lines, + for added lines
 - Space prefix for context lines
+- NO blank lines between hunks
+
+MULTIPLE CHANGES IN ONE FILE:
+If a file has changes at lines 5, 15, and 25, create ONE diff with MULTIPLE hunks:
+```
+diff --git a/src/app.py b/src/app.py
+--- a/src/app.py
++++ b/src/app.py
+@@ -3,7 +3,7 @@
+ context
+-change at line 5
++fixed line 5
+ context
+@@ -13,7 +13,7 @@
+ context
+-change at line 15
++fixed line 15
+ context
+@@ -23,7 +23,7 @@
+ context
+-change at line 25
++fixed line 25
+ context
+```
+
+HUNK CALCULATION RULES:
+1. Count ALL lines in the hunk (including context lines)
+2. Start line = first context line's number
+3. Count = total lines in this hunk section
+4. If same number of lines changed: counts stay same
+5. If removing N lines: new_count = old_count - N  
+6. If adding N lines: new_count = old_count + N
 
 CRITICAL PATH REQUIREMENTS:
 - Use RELATIVE paths from repository root (e.g., src/module/file.py)
 - NEVER use absolute paths (e.g., /opt/andela/genai/repo/src/module/file.py)
-- File paths in diff headers should match the file_path field
-- Example: if file_path is "src/app.py", use:
-  diff --git a/src/app.py b/src/app.py
-  --- a/src/app.py
-  +++ b/src/app.py
+- File paths must match the file_path field exactly
 
 CRITICAL CODE REQUIREMENTS:
 - Use the EXACT line numbers shown in the code context above
-- Match indentation and spacing exactly
+- Match indentation and spacing exactly (every space and tab matters)
 - Make minimal changes - only fix the reported issues
-- Ensure patches can be applied with `git apply`
+- Each hunk MUST be self-contained with proper context
+- Count your lines carefully in hunk headers
+
+COMMON MISTAKES TO AVOID:
+❌ Wrong: @@ -10 +10 @@ (missing line counts)
+✅ Right: @@ -10,7 +10,7 @@ (with counts)
+
+❌ Wrong: Creating multiple diffs for same file
+✅ Right: One diff with multiple hunks for same file
+
+❌ Wrong: No context lines around changes
+✅ Right: Always include 3-5 context lines
 
 Return ONLY valid JSON, no additional text."""
         
@@ -374,27 +413,66 @@ Your expertise includes:
 - Using exact line numbers and code from provided context
 - Following Python best practices and PEP standards
 - Security-aware coding practices
+- Creating multi-hunk diffs when multiple changes are needed in one file
 
 CRITICAL GUIDELINES:
 1. Always use EXACT code from the provided file context - never hallucinate or guess
 2. Generate proper unified diff format with ---, +++, and @@ headers
-3. Include 3-5 context lines before and after changes
+3. Include 3-5 context lines before and after each change
 4. Make minimal changes that address only the specific issues
 5. Preserve existing code style, indentation, and formatting
 6. Always prioritize security fixes over style issues
 7. Always respond with valid JSON format as requested
 8. Never include additional text outside the requested JSON structure
 
-UNIFIED DIFF FORMAT:
+UNIFIED DIFF FORMAT (Single Hunk):
 ```
 diff --git a/file.py b/file.py
 --- a/file.py
 +++ b/file.py
-@@ -line_num,count +line_num,count @@
+@@ -10,7 +10,7 @@
+ context line
+ context line
  context line
 -removed line
 +added line
  context line
+ context line
+ context line
 ```
+
+UNIFIED DIFF FORMAT (Multiple Hunks):
+When a file has multiple changes in different locations, create multiple hunks:
+```
+diff --git a/file.py b/file.py
+--- a/file.py
++++ b/file.py
+@@ -10,7 +10,7 @@
+ context line
+-old code at line 13
++new code at line 13
+ context line
+@@ -25,6 +25,6 @@
+ context line
+-old code at line 28
++new code at line 28
+ context line
+@@ -40,5 +40,5 @@
+ context line
+-old code at line 43
++new code at line 43
+ context line
+```
+
+HUNK HEADER FORMAT (@@ -start,count +start,count @@):
+- First number: Starting line number in original file
+- Second number: Number of lines in this hunk (including context)
+- Example: @@ -10,7 +10,7 @@ means:
+  * Original: starts at line 10, spans 7 lines
+  * Modified: starts at line 10, spans 7 lines (same count if same # of lines)
+- If removing lines: @@ -10,8 +10,7 @@ (8 lines → 7 lines)
+- If adding lines: @@ -10,7 +10,8 @@ (7 lines → 8 lines)
+
+CRITICAL: Each hunk must be self-contained with proper context. Hunks should be separated by blank lines in the source but written consecutively in the diff.
 
 Be precise, thorough, and security-conscious in your responses. Always return properly formatted JSON."""
