@@ -126,7 +126,7 @@ def test_docstring_formatting():
 - Multi-line strings ❌ Currently fails
 - Batch patches ❌ Currently fail
 
-**Status**: Deferred - Focus on Phase 2 observability first to understand failures
+**Status**: Ready to implement - Use trace viewer (Phase 2.1) to identify patterns first
 Run on every code change in CI.
 
 #### 1.3 Synthetic Test Data Generation
@@ -177,10 +177,10 @@ Visualize in simple dashboard (Metabase/Streamlit).
 
 ---
 
-### Phase 2: Observability & Debugging (Week 2)
+### Phase 2: Observability & Debugging ✅ Phase 2.1 COMPLETE (Oct 6, 2025)
 **Goal**: Understand WHY things fail + make debugging effortless
 
-#### 2.1 Trace Viewing UI
+#### 2.1 Trace Viewing UI ✅ COMPLETE
 Build lightweight tool to view/filter traces:
 
 ```python
@@ -219,6 +219,27 @@ for trace in traces:
 - Filter by success/fail, strategy, complexity
 - View prompt + response + validation side-by-side
 - One-click save to fine-tuning dataset
+
+**Implementation** ✅:
+- ✅ Created `trace_viewer.py` Streamlit app (420 lines)
+- ✅ Summary metrics dashboard (success rate, cost, latency, retries)
+- ✅ Advanced filtering (rule ID, status, strategy, text search)
+- ✅ Expandable trace cards with full details
+- ✅ Side-by-side prompt/response/patch/error viewing
+- ✅ Retry comparison (see previous errors)
+- ✅ Ready for data curation (mark good/bad examples)
+- ✅ Comprehensive user guide: `docs/TRACE_VIEWER_GUIDE.md`
+
+**Usage**:
+```bash
+pip install -e ".[observability]"
+streamlit run trace_viewer.py
+```
+
+**Evidence**:
+- File: `trace_viewer.py` (Streamlit app)
+- Guide: `docs/TRACE_VIEWER_GUIDE.md` (complete workflows)
+- Dependencies: Added `[observability]` extras to `pyproject.toml`
 
 #### 2.2 Failure Mode Clustering
 ```python
