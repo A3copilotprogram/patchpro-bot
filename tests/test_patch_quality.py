@@ -13,9 +13,9 @@ Goal: Establish baseline (~30% pass rate) and track improvement toward >90%.
 
 import pytest
 from pathlib import Path
-from patchpro_bot.models import AnalysisFinding, Location, Severity
+from patchpro_bot.models import AnalysisFinding, CodeLocation, Severity
 from patchpro_bot.agentic_patch_generator_v2 import AgenticPatchGeneratorV2
-from patchpro_bot.config import AgentConfig
+from patchpro_bot.llm.client import LLMClient
 import subprocess
 import tempfile
 import shutil
@@ -50,21 +50,20 @@ def temp_repo(tmp_path):
 
 
 @pytest.fixture
-def agent_config():
-    """Agent configuration for testing."""
-    return AgentConfig(
-        enable_agentic_mode=True,
-        agentic_max_retries=3,
-        agentic_enable_planning=True
-    )
+def llm_client():
+    """Create LLM client for testing."""
+    return LLMClient()
 
 
 @pytest.fixture
-def patch_generator(temp_repo, agent_config):
+def patch_generator(temp_repo, llm_client):
     """Create patch generator instance."""
     return AgenticPatchGeneratorV2(
-        repo_path=str(temp_repo),
-        agent_config=agent_config
+        llm_client=llm_client,
+        repo_path=temp_repo,
+        max_retries=3,
+        enable_planning=True,
+        enable_tracing=True
     )
 
 
@@ -82,7 +81,7 @@ def create_finding(
         message=message,
         tool=tool,
         severity=severity,
-        location=Location(file=file_path, line=line, column=1),
+        location=CodeLocation(file=file_path, line=line, column=1),
         context="",
         fix_available=False
     )
