@@ -24,6 +24,7 @@ from patchpro_bot.context_reader import FindingContextReader
 from patchpro_bot.llm.prompts import PromptBuilder
 from patchpro_bot.validators import DiffValidator
 from patchpro_bot.telemetry import PatchTracer
+from patchpro_bot.patch_validator import PatchValidator
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ class AgenticPatchGeneratorV2(AgenticCore):
         self.prompt_builder = PromptBuilder()
         self.response_parser = ResponseParser()
         self.validator = DiffValidator()
+        self.patch_validator = PatchValidator()  # NEW: For fixing corrupt hunks
         
         # Telemetry
         self.enable_tracing = enable_tracing
@@ -398,6 +400,26 @@ Generate a corrected patch that will pass git apply validation.
                     logger.warning(feedback)
                     continue
                 
+                # NEW: Try to fix corrupt hunk headers before git apply
+                try:
+                    file_path = self.repo_path / patch.file_path
+                    logger.debug(f"Validating patch for {patch.file_path} at {file_path}")
+                    
+                    fixed_patch_content, fix_metrics = self.patch_validator.validate_and_fix_patch(
+                        patch.diff_content,
+                        file_path
+                    )
+                    
+                    logger.debug(f"Validation result: {fix_metrics}")
+                    
+                    if fix_metrics['was_fixed']:
+                        logger.info(f"🔧 Fixed corrupt hunk headers in {patch.file_path}: {fix_metrics['fixes_applied']}")
+                        patch.diff_content = fixed_patch_content  # Use fixed version
+                    elif fix_metrics['errors']:
+                        logger.warning(f"⚠️  Could not fix patch for {patch.file_path}: {fix_metrics['errors']}")
+                except Exception as e:
+                    logger.error(f"❌ Patch validation error for {patch.file_path}: {e}", exc_info=True)
+                
                 # Then check if git can apply it (the real test)
                 can_apply, apply_error = self.validator.can_apply(
                     patch.diff_content,
@@ -508,6 +530,26 @@ Generate a corrected unified diff patch that will pass git apply validation.
                     validation_feedback.append(feedback)
                     logger.warning(feedback)
                     continue
+                
+                # NEW: Try to fix corrupt hunk headers before git apply
+                try:
+                    file_path = self.repo_path / patch.file_path
+                    logger.debug(f"Validating patch for {patch.file_path} at {file_path}")
+                    
+                    fixed_patch_content, fix_metrics = self.patch_validator.validate_and_fix_patch(
+                        patch.diff_content,
+                        file_path
+                    )
+                    
+                    logger.debug(f"Validation result: {fix_metrics}")
+                    
+                    if fix_metrics['was_fixed']:
+                        logger.info(f"🔧 Fixed corrupt hunk headers in {patch.file_path}: {fix_metrics['fixes_applied']}")
+                        patch.diff_content = fixed_patch_content  # Use fixed version
+                    elif fix_metrics['errors']:
+                        logger.warning(f"⚠️  Could not fix patch for {patch.file_path}: {fix_metrics['errors']}")
+                except Exception as e:
+                    logger.error(f"❌ Patch validation error for {patch.file_path}: {e}", exc_info=True)
                 
                 # Then check if git can apply it (the real test)
                 can_apply, apply_error = self.validator.can_apply(
