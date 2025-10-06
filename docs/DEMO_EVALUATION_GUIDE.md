@@ -246,11 +246,32 @@ max_tokens = 8192
 
 **Project Repository**: https://github.com/A3copilotprogram/patchpro-bot  
 **Demo PR**: https://github.com/A3copilotprogram/patchpro-demo-repo/pull/9  
-**Documentation**: See `docs/PATH_TO_MVP.md` for technical roadmap
+**Documentation**: See `docs/PATH_TO_MVP.md` for technical roadmap  
+**Video Demo Script**: See `docs/VIDEO_DEMO_SCRIPT.md` for 2-minute recording guide
 
 **Team**: PLG_5 (A3 Gentelligence Program)  
 **Sprint**: Sprint-0 (Foundation)  
 **Status**: Phase 1 Complete ✅
+
+---
+
+## 🎥 Video Demo Option
+
+**Prefer video over reading?** We've created a complete 2-minute video demo script showing:
+- Live navigation through PR #9 and workflow logs
+- Visual proof of agentic self-correction (retry attempts)
+- Telemetry database evidence
+- Impact metrics and value proposition
+
+**See**: `docs/VIDEO_DEMO_SCRIPT.md` for scene-by-scene recording instructions.
+
+**Recording this video** (optional but recommended):
+1. Follow the script in VIDEO_DEMO_SCRIPT.md
+2. Use screen recorder (OBS, Loom, QuickTime)
+3. Upload to YouTube (unlisted)
+4. Share link with judges
+
+**Benefit**: Makes evaluation accessible for visual learners and provides shareable proof of innovation.
 
 ---
 
