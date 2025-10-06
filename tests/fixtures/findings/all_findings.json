@@ -1,0 +1,86 @@
+[
+  {
+    "tool": "semgrep",
+    "rule_id": "python.lang.security.audit.formatted-sql-query.formatted-sql-query",
+    "severity": "high",
+    "message": "Detected SQL statement that is tainted by user input. Use parameterized queries.",
+    "file": "tests/fixtures/security/sql_injection.py",
+    "line": 10,
+    "column": 5,
+    "end_line": 11,
+    "end_column": 30,
+    "code_snippet": "    query = f\"SELECT * FROM users WHERE username = '{username}'\""
+  },
+  {
+    "tool": "semgrep",
+    "rule_id": "python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1",
+    "severity": "medium",
+    "message": "SHA-1 is cryptographically broken. Use SHA-256 or better.",
+    "file": "tests/fixtures/security/insecure_hash.py",
+    "line": 7,
+    "column": 12,
+    "end_line": 7,
+    "end_column": 58,
+    "code_snippet": "    return hashlib.sha1(password.encode()).hexdigest()"
+  },
+  {
+    "tool": "ruff",
+    "rule_id": "F841",
+    "severity": "info",
+    "message": "Local variable `count` is assigned to but never used",
+    "file": "tests/fixtures/style/unused_variable.py",
+    "line": 6,
+    "column": 5,
+    "end_line": 6,
+    "end_column": 10,
+    "code_snippet": "    count = 0  # F841: Local variable 'count' is assigned but never used"
+  },
+  {
+    "tool": "ruff",
+    "rule_id": "E401",
+    "severity": "info",
+    "message": "Multiple imports on one line",
+    "file": "tests/fixtures/style/multiple_imports.py",
+    "line": 2,
+    "column": 1,
+    "end_line": 2,
+    "end_column": 30,
+    "code_snippet": "import os, sys, json  # E401: Multiple imports on one line"
+  },
+  {
+    "tool": "ruff",
+    "rule_id": "F401",
+    "severity": "info",
+    "message": "`sys` imported but unused",
+    "file": "tests/fixtures/imports/unused_import.py",
+    "line": 3,
+    "column": 8,
+    "end_line": 3,
+    "end_column": 11,
+    "code_snippet": "import sys  # F401: 'sys' imported but unused"
+  },
+  {
+    "tool": "ruff",
+    "rule_id": "I001",
+    "severity": "info",
+    "message": "Import block is not sorted",
+    "file": "tests/fixtures/imports/import_ordering_simple.py",
+    "line": 2,
+    "column": 1,
+    "end_line": 4,
+    "end_column": 11,
+    "code_snippet": "import json\nimport os\nimport sys"
+  },
+  {
+    "tool": "ruff",
+    "rule_id": "I001",
+    "severity": "info",
+    "message": "Import block is not sorted or grouped correctly",
+    "file": "tests/fixtures/imports/import_ordering_complex.py",
+    "line": 2,
+    "column": 1,
+    "end_line": 14,
+    "end_column": 30,
+    "code_snippet": "# Complex import block with mixed stdlib and third-party"
+  }
+]
